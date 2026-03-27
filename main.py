@@ -7,7 +7,23 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKe
 from dotenv import load_dotenv
 from database import Database
 from states import OrderState, AddEventState
+from aiohttp import web
+import asyncio
 
+
+async def handle(request):
+    return web.Response(text="Bot is alive!")
+
+async def start_webhook():
+    app = web.Application()
+    app.router.add_get("/", handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', int(os.getenv("PORT", 8000)))
+    await site.start()
+
+    
+    
 load_dotenv()
 db = Database()
 bot = Bot(token=os.getenv("BOT_TOKEN"))
@@ -136,6 +152,9 @@ async def handle_decision(callback: CallbackQuery):
     await callback.message.delete()
 
 async def main():
+    await db.connect()
+    asyncio.create_task(start_webhook()) 
+    await dp.start_polling(bot)
     await db.connect()
     await dp.start_polling(bot)
 
