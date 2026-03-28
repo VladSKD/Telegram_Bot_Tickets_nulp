@@ -1,3 +1,5 @@
+from tokenize import group
+
 import asyncpg
 import os
 from dotenv import load_dotenv
@@ -15,14 +17,13 @@ class Database:
     # --- Секція Користувачів ---
     async def register_full_user(self, tg_id, username, first_name, last_name, institute, group):
         query = """
-        INSERT INTO users (tg_id, username, first_name, last_name, institute, group_name)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (tg_id) DO UPDATE
-        SET username = EXCLUDED.username,
-            first_name = EXCLUDED.first_name,
-            last_name = EXCLUDED.last_name,
-            institute = EXCLUDED.institute,
-            group_name = EXCLUDED.group_name
+        INSERT INTO users (tg_id, username, first_name, last_name, institute, student_group) 
+        VALUES ($1, $2, $3, $4, $5, $6) 
+        ON CONFLICT (tg_id) DO UPDATE SET 
+            first_name = EXCLUDED.first_name, 
+            last_name = EXCLUDED.last_name, 
+            institute = EXCLUDED.institute, 
+            student_group = EXCLUDED.student_group
         """
         await self.pool.execute(query, tg_id, username, first_name, last_name, institute, group)
 
