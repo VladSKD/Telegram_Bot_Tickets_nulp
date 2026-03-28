@@ -46,7 +46,17 @@ def admin_kb():
 # --- ЛОГІКА ЮЗЕРА ---
 @dp.message(Command("start"))
 async def start(message: Message):
-    await message.answer("Привіт! Я бот для квитків Політехніки.", reply_markup=main_kb(message.from_user.id))
+    # РЕЄСТРУЄМО ЮЗЕРА В БАЗІ
+    await db.add_user(
+        message.from_user.id, 
+        message.from_user.full_name, 
+        message.from_user.username
+    )
+    
+    await message.answer(
+        "Привіт! Я бот для квитків Політехніки.", 
+        reply_markup=main_kb(message.from_user.id)
+    )
 
 @dp.message(F.text == "🎟 Доступні події")
 async def list_events(message: Message):
