@@ -11,7 +11,6 @@ class Database:
         self.pool = None
 
     async def connect(self):
-        # Підключення до твого Neon
         self.pool = await asyncpg.create_pool(os.getenv("DATABASE_URL"))
 
     # --- Секція Користувачів ---
@@ -28,16 +27,13 @@ class Database:
         await self.pool.execute(query, tg_id, username, first_name, last_name, institute, group)
 
     # --- Секція Подій ---
-    # ОНОВЛЕНО: Додали card_number
     async def add_event(self, title, desc, dt, price, link, card):
         query = "INSERT INTO events (title, description, date_time, price, bank_link, card_number) VALUES ($1, $2, $3, $4, $5, $6)"
         await self.pool.execute(query, title, desc, dt, price, link, card)
 
-    # НОВЕ: Щоб брати лінк і картку для юзера
     async def get_event(self, event_id):
         return await self.pool.fetchrow("SELECT * FROM events WHERE id = $1", event_id)
 
-    # НОВЕ: Щоб брати ПІБ і групу для адміна
     async def get_user(self, tg_id):
         return await self.pool.fetchrow("SELECT * FROM users WHERE tg_id = $1", tg_id)
 

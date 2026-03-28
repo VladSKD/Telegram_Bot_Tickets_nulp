@@ -5,7 +5,6 @@ import os
 import json
 
 def get_client():
-    # Читаємо JSON ключ зі змінної оточення
     creds_dict = json.loads(os.getenv("GOOGLE_CREDS_JSON"))
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
@@ -17,7 +16,6 @@ def _get_or_create_worksheet(event_title):
     try:
         worksheet = doc.worksheet(event_title)
     except gspread.exceptions.WorksheetNotFound:
-        # Якщо аркуша немає - створюємо його
         worksheet = doc.add_worksheet(title=event_title, rows="1000", cols="10")
         worksheet.append_row(["ID Замовлення", "Прізвище", "Ім'я", "Telegram", "Інститут", "Група", "К-сть квитків", "Статус оплати", "Видано квитки"])
     return worksheet
@@ -32,7 +30,6 @@ def _update_cell_in_sheet(event_title, order_id, column_index, new_value):
     if cell:
         ws.update_cell(cell.row, column_index, new_value)
 
-# Асинхронні обгортки, щоб бот не зависав під час відправки даних у Google
 async def add_order_to_sheet(*args):
     await asyncio.to_thread(_add_order, *args)
 
