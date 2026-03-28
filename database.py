@@ -12,6 +12,20 @@ class Database:
         # Підключення до твого Neon
         self.pool = await asyncpg.create_pool(os.getenv("DATABASE_URL"))
 
+    # --- Секція Користувачів ---
+    async def register_full_user(self, tg_id, username, first_name, last_name, institute, group):
+        query = """
+        INSERT INTO users (tg_id, username, first_name, last_name, institute, group_name)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (tg_id) DO UPDATE
+        SET username = EXCLUDED.username,
+            first_name = EXCLUDED.first_name,
+            last_name = EXCLUDED.last_name,
+            institute = EXCLUDED.institute,
+            group_name = EXCLUDED.group_name
+        """
+        await self.pool.execute(query, tg_id, username, first_name, last_name, institute, group)
+
     # --- Секція Подій ---
     async def add_event(self, title, desc, dt, price, link):
         query = "INSERT INTO events (title, description, date_time, price, bank_link) VALUES ($1, $2, $3, $4, $5)"

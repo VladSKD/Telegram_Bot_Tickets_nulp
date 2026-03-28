@@ -45,18 +45,49 @@ def admin_kb():
 
 # --- ЛОГІКА ЮЗЕРА ---
 @dp.message(Command("start"))
-async def start(message: Message):
-    # РЕЄСТРУЄМО ЮЗЕРА В БАЗІ
-    await db.add_user(
-        message.from_user.id, 
-        message.from_user.full_name, 
-        message.from_user.username
+async def cmd_start(message: Message, state: FSMContext):
+    # Перевіряємо, чи є юзер в базі (опціонально, але для початку просто почнемо опитування)
+    await message.answer("Привіт! Давай зареєструємо тебе в системі. Введи своє Прізвище:")
+    await state.set_state(Registration.waiting_for_last_name)
+
+@dp.message(Registration.waiting_for_last_name)
+async def process_last_name(message: Message, state: FSMContext):
+    await state.update_data(last_name=message.text)
+    await message.answer("Тепер введи своє Ім'я:")
+    await state.set_state(Registration.waiting_for_first_name)
+
+@dp.message(Registration.waiting_for_first_name)
+async def process_first_name(message: Message, state: FSMContext):
+    await state.update_data(first_name=message.text)
+    await message.answer("З якого ти інституту? (напр. ІКНІ, ІАРХ...):")
+    await state.set_state(Registration.waiting_for_institute)
+
+@dp.message(Registration.waiting_for_institute)
+async def process_institute(message: Message, state: FSMContext):
+    await state.update_data(institute=message.text)
+    await message.answer("Вкажи свою групу (напр. КН-201):")
+    await state.set_state(Registration.waiting_for_group)
+
+@dp.message(Registration.waiting_for_group)
+async def process_group(message: Message, state: FSMContext):
+    user_data = await state.get_data()
+    group = message.text
+    
+    # Зберігаємо все в базу
+    await db.register_full_user(
+        tg_id=message.from_user.id,
+        username=message.from_user.username,
+        first_name=user_data['first_name'],
+        last_name=user_data['last_name'],
+        institute=user_data['institute'],
+        group=group
     )
     
     await message.answer(
-        "Привіт! Я бот для квитків Політехніки.", 
-        reply_markup=main_kb(message.from_user.id)
+        f"Реєстрація успішна, {user_data['first_name']}! Тепер ти можеш купувати квитки.",
+        reply_markup=main_kb(message.from_user.id) # Показуємо головне меню
     )
+    await state.clear()
 
 @dp.message(F.text == "🎟 Доступні події")
 async def list_events(message: Message):
