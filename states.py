@@ -8,13 +8,14 @@ class Registration(StatesGroup):
     waiting_for_group = State()
 
 # Твій старий клас для замовлення залишається
-class OrderState(StatesGroup):
-    waiting_for_quantity = State()
-    waiting_for_proof = State()
+class AddEventState(StatesGroup):
+    title = State()
+    description = State()
+    date_time = State()
+    price = State()
+    bank_link = State()
+    card_number = State() # <-- Додали це
     
-class OrderState(StatesGroup):
-    waiting_for_quantity = State()
-    waiting_for_proof = State()
 
 class AddEventState(StatesGroup):
     title = State()

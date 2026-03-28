@@ -28,12 +28,12 @@ load_dotenv()
 db = Database()
 bot = Bot(token=os.getenv("BOT_TOKEN"))
 dp = Dispatcher()
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x]
 
 # --- Клавіатури ---
 def main_kb(user_id):
     buttons = [[KeyboardButton(text="🎟 Доступні події")]]
-    if user_id == ADMIN_ID:
+    if user_id in ADMIN_IDS: # <-- Тепер перевіряємо у списку
         buttons.append([KeyboardButton(text="⚙️ Адмін-панель")])
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
@@ -112,7 +112,18 @@ async def start_buy(callback: CallbackQuery, state: FSMContext):
 async def set_qty(message: Message, state: FSMContext):
     if not message.text.isdigit(): return await message.answer("Введи число!")
     await state.update_data(qty=int(message.text))
-    await message.answer("Оплачуй на банку (посилання) і скинь скріншот або PDF квитанцію.")
+    data = await state.get_data()
+    
+    # Витягуємо подію з бази, щоб взяти лінк і картку
+    event = await db.get_event(data['ev_id'])
+    total_price = event['price'] * int(message.text)
+    
+    text = (f"Сума до оплати: <b>{total_price} грн</b>\n\n"
+            f"🔗 Банка: {event['bank_link']}\n"
+            f"💳 Картка: <code>{event['card_number']}</code>\n\n"
+            f"Скинь скріншот або PDF квитанцію.")
+    
+    await message.answer(text, parse_mode="HTML")
     await state.set_state(OrderState.waiting_for_proof)
 
 @dp.message(OrderState.waiting_for_proof, F.photo | F.document)
@@ -128,15 +139,27 @@ async def get_proof(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="❌ Відхилити", callback_data=f"reje_{order_id}")]
     ])
     
-    await bot.send_message(ADMIN_ID, f"Нова оплата #{order_id}!")
-    if f_type == "photo": await bot.send_photo(ADMIN_ID, f_id, reply_markup=kb)
-    else: await bot.send_document(ADMIN_ID, f_id, reply_markup=kb)
+    # Витягуємо юзера з бази
+    user = await db.get_user(message.from_user.id)
+    username = f"@{user['username']}" if user['username'] else "Без юзернейму"
+    caption = (f"🎫 Нова оплата #{order_id}!\n"
+               f"👤 Студент: {user['last_name']} {user['first_name']} ({username})\n"
+               f"🎓 Інститут: {user['institute']}, Група: {user['student_group']}\n"
+               f"🎟 Кількість: {data['qty']} шт.")
     
+    # Розсилаємо ВСІМ адмінам
+    for admin in ADMIN_IDS:
+        try:
+            if f_type == "photo": await bot.send_photo(admin, f_id, caption=caption, reply_markup=kb)
+            else: await bot.send_document(admin, f_id, caption=caption, reply_markup=kb)
+        except Exception:
+            pass # Якщо якийсь адмін заблокував бота, пропускаємо його
+            
     await message.answer("Очікуйте підтвердження адміном.")
     await state.clear()
 
 # --- ЛОГІКА АДМІНА (ДОДАВАННЯ ПОДІЇ) ---
-@dp.message(F.text == "⚙️ Адмін-панель", F.from_user.id == ADMIN_ID)
+@dp.message(F.text == "⚙️ Адмін-панель", F.from_user.id.in_(ADMIN_IDS))
 async def admin_panel(message: Message):
     await message.answer("Що бажаєте зробити?", reply_markup=admin_kb())
 
@@ -163,6 +186,7 @@ async def add_ev_dt(message: Message, state: FSMContext):
     await message.answer("Введіть ціну (тільки число):")
     await state.set_state(AddEventState.price)
 
+# У блоці логіки додавання події знайди add_ev_price і заміни подальші кроки:
 @dp.message(AddEventState.price)
 async def add_ev_price(message: Message, state: FSMContext):
     await state.update_data(price=int(message.text))
@@ -170,10 +194,17 @@ async def add_ev_price(message: Message, state: FSMContext):
     await state.set_state(AddEventState.bank_link)
 
 @dp.message(AddEventState.bank_link)
+async def add_ev_link(message: Message, state: FSMContext):
+    await state.update_data(link=message.text)
+    await message.answer("Введіть номер картки (тільки цифри):")
+    await state.set_state(AddEventState.card_number)
+
+@dp.message(AddEventState.card_number)
 async def add_ev_final(message: Message, state: FSMContext):
     d = await state.get_data()
-    await db.add_event(d['title'], d['desc'], d['dt'], d['price'], message.text)
-    await message.answer("✅ Подію успішно додано!", reply_markup=main_kb(ADMIN_ID))
+    # ОНОВЛЕНО: Тепер передаємо і link, і текст картки
+    await db.add_event(d['title'], d['desc'], d['dt'], d['price'], d['link'], message.text)
+    await message.answer("✅ Подію успішно додано!", reply_markup=main_kb(message.from_user.id))
     await state.clear()
 
 # --- ПІДТВЕРДЖЕННЯ ОПЛАТИ ---

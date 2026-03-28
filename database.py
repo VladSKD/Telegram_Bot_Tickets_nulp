@@ -28,9 +28,18 @@ class Database:
         await self.pool.execute(query, tg_id, username, first_name, last_name, institute, group)
 
     # --- Секція Подій ---
-    async def add_event(self, title, desc, dt, price, link):
-        query = "INSERT INTO events (title, description, date_time, price, bank_link) VALUES ($1, $2, $3, $4, $5)"
-        await self.pool.execute(query, title, desc, dt, price, link)
+    # ОНОВЛЕНО: Додали card_number
+    async def add_event(self, title, desc, dt, price, link, card):
+        query = "INSERT INTO events (title, description, date_time, price, bank_link, card_number) VALUES ($1, $2, $3, $4, $5, $6)"
+        await self.pool.execute(query, title, desc, dt, price, link, card)
+
+    # НОВЕ: Щоб брати лінк і картку для юзера
+    async def get_event(self, event_id):
+        return await self.pool.fetchrow("SELECT * FROM events WHERE id = $1", event_id)
+
+    # НОВЕ: Щоб брати ПІБ і групу для адміна
+    async def get_user(self, tg_id):
+        return await self.pool.fetchrow("SELECT * FROM users WHERE tg_id = $1", tg_id)
 
     async def get_active_events(self):
         return await self.pool.fetch("SELECT * FROM events WHERE is_active = TRUE")
