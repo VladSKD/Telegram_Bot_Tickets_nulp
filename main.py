@@ -9,7 +9,7 @@ from database import Database
 from states import OrderState, AddEventState, Registration
 from aiohttp import web
 import asyncio
-
+import sheets
 
 async def handle(request):
     return web.Response(text="Bot is alive!")
@@ -134,26 +134,33 @@ async def get_proof(message: Message, state: FSMContext):
     
     order_id = await db.add_order(message.from_user.id, data['ev_id'], data['qty'], f_id, f_type)
     
+    # Витягуємо дані для таблиці
+    user = await db.get_user(message.from_user.id)
+    event = await db.get_event(data['ev_id'])
+    username = user['username'] if user['username'] else "Без_юзернейму"
+    
+    # 📝 ЗАПИСУЄМО В GOOGLE SHEETS
+    await sheets.add_order_to_sheet(
+        event['title'], order_id, user['last_name'], user['first_name'], 
+        username, user['institute'], user['student_group'], data['qty'], "Очікує"
+    )
+    
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Підтвердити", callback_data=f"conf_{order_id}")],
         [InlineKeyboardButton(text="❌ Відхилити", callback_data=f"reje_{order_id}")]
     ])
     
-    # Витягуємо юзера з бази
-    user = await db.get_user(message.from_user.id)
-    username = f"@{user['username']}" if user['username'] else "Без юзернейму"
     caption = (f"🎫 Нова оплата #{order_id}!\n"
-               f"👤 Студент: {user['last_name']} {user['first_name']} ({username})\n"
-               f"🎓 Інститут: {user['institute']}, Група: {user['student_group']}\n"
+               f"👤 {user['last_name']} {user['first_name']} (@{username})\n"
+               f"🎓 {user['institute']}, {user['student_group']}\n"
                f"🎟 Кількість: {data['qty']} шт.")
-    
-    # Розсилаємо ВСІМ адмінам
+               
     for admin in ADMIN_IDS:
         try:
             if f_type == "photo": await bot.send_photo(admin, f_id, caption=caption, reply_markup=kb)
             else: await bot.send_document(admin, f_id, caption=caption, reply_markup=kb)
         except Exception:
-            pass # Якщо якийсь адмін заблокував бота, пропускаємо його
+            pass
             
     await message.answer("Очікуйте підтвердження адміном.")
     await state.clear()
@@ -213,15 +220,41 @@ async def handle_decision(callback: CallbackQuery):
     action = callback.data.split("_")[0]
     order_id = int(callback.data.split("_")[1])
     order = await db.get_order(order_id)
+    event = await db.get_event(order['event_id'])
     
     if action == "conf":
         await db.update_order_status(order_id, "confirmed")
+        # 📝 Оновлюємо статус в таблиці
+        await sheets.update_payment_in_sheet(event['title'], order_id, "Підтверджено")
         await bot.send_message(order['user_id'], "✅ Твоя оплата підтверджена! Квиток чекає на тебе.")
-        await callback.message.answer(f"Замовлення #{order_id} підтверджено.")
+        
+        # Замінюємо клавіатуру на кнопку видачі квитків
+        give_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎟 Відмітити квитки як ВИДАНІ", callback_data=f"given_{order_id}")]
+        ])
+        await callback.message.edit_reply_markup(reply_markup=give_kb)
+        await callback.answer("Оплата підтверджена!")
     else:
+        await sheets.update_payment_in_sheet(event['title'], order_id, "Відхилено")
         await bot.send_message(order['user_id'], "❌ Оплата не підтверджена. Перевір дані або напиши адміну.")
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.reply("Замовлення відхилено.")
+
+# 3. Новий хендлер для видачі квитків
+@dp.callback_query(F.data.startswith("given_"))
+async def mark_ticket_given(callback: CallbackQuery):
+    order_id = int(callback.data.split("_")[1])
+    order = await db.get_order(order_id)
+    event = await db.get_event(order['event_id'])
     
-    await callback.message.delete()
+    # В базі ми створили колонку is_ticket_given, оновлюємо її
+    await db.pool.execute("UPDATE orders SET is_ticket_given = TRUE WHERE id = $1", order_id)
+    
+    # 📝 Оновлюємо статус в таблиці
+    await sheets.update_ticket_in_sheet(event['title'], order_id, "Так")
+    
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.reply(f"✅ Квитки для замовлення #{order_id} успішно видані студенту!")
 
 async def main():
     await db.connect()
