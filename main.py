@@ -6,7 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from dotenv import load_dotenv
 from database import Database
-from states import OrderState, AddEventState
+from states import OrderState, AddEventState, Registration
 from aiohttp import web
 import asyncio
 
