@@ -69,3 +69,24 @@ class Database:
 
     async def get_order(self, order_id):
         return await self.pool.fetchrow("SELECT * FROM orders WHERE id = $1", order_id)
+    
+    async def update_user_field(self, tg_id: int, field_name: str, new_value: str):
+        """
+        Оновлює конкретне поле в профілі користувача (адаптовано під asyncpg).
+        """
+        db_columns = {
+            "last_name": "last_name",
+            "first_name": "first_name",
+            "institute": "institute",
+            "group": "student_group"
+        }
+        
+        column = db_columns.get(field_name)
+        
+        if not column:
+            print(f"⚠️ Спроба оновити невідоме поле: {field_name}")
+            return  
+
+        query = f"UPDATE users SET {column} = $1 WHERE tg_id = $2"
+
+        await self.pool.execute(query, new_value, tg_id)
