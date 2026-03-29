@@ -107,19 +107,22 @@ async def start_buy(callback: CallbackQuery, state: FSMContext):
 
 @dp.message(OrderState.waiting_for_quantity)
 async def set_qty(message: Message, state: FSMContext):
-    if message.text == "Доступні події":
+    # Дозволяємо вийти з процесу покупки, якщо передумали і натиснули кнопку меню
+    if message.text in ["Доступні події", "Адмін-панель"]:
         await state.clear()
-        return await list_events(message)
+        if message.text == "Доступні події": return await list_events(message)
+        else: return await admin_panel(message)
 
+    # 🛡 ЖОРСТКИЙ ЗАХИСТ ВІД ЮЗЕРІВ: тільки цифри і строго більше 0
     if not message.text.isdigit() or int(message.text) <= 0: 
-        return await message.answer("Будь ласка, введи коректне число квитків (більше нуля)!")
+        return await message.answer("❌ Будь ласка, введи коректне число квитків (більше нуля, наприклад: 1, 2, 3)!")
         
     qty = int(message.text)
     data = await state.get_data()
     event = await db.get_event(data['ev_id'])
     
     if qty > event['remaining_tickets']:
-        return await message.answer(f"Ти не можеш взяти стільки. Залишилось всього {event['remaining_tickets']} квитків.")
+        return await message.answer(f"❌ Ти не можеш взяти стільки. Залишилось всього {event['remaining_tickets']} квитків.")
     
     await state.update_data(qty=qty)
     user = await db.get_user(message.from_user.id)
@@ -129,7 +132,7 @@ async def set_qty(message: Message, state: FSMContext):
         order_id = await db.add_order(message.from_user.id, data['ev_id'], qty, None, "free")
         await db.update_order_status(order_id, "confirmed")
         await sheets.add_order_to_sheet(event['title'], order_id, user['last_name'], user['first_name'], username, user['institute'], user['student_group'], qty, "Безкоштовно")
-        await message.answer(f"Реєстрація успішна!\n\n{event['success_message']}")
+        await message.answer(f"✅ Реєстрація успішна!\n\n{event['success_message']}")
         await state.clear()
     else:
         if event['is_fixed_price']:
@@ -272,12 +275,7 @@ async def add_ev_price(message: Message, state: FSMContext):
     await message.answer("Введіть посилання на банку Monobank:")
     await state.set_state(AddEventState.bank_link)
 
-@dp.message(AddEventState.price)
-async def add_ev_price(message: Message, state: FSMContext):
-    if not message.text.isdigit(): return await message.answer("Введіть число!")
-    await state.update_data(price=int(message.text))
-    await message.answer("Введіть посилання на банку Monobank:")
-    await state.set_state(AddEventState.bank_link)
+
 
 @dp.message(AddEventState.bank_link)
 async def add_ev_link(message: Message, state: FSMContext):
