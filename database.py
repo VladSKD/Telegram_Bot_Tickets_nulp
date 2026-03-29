@@ -1,5 +1,3 @@
-from tokenize import group
-
 import asyncpg
 import os
 from dotenv import load_dotenv
@@ -13,7 +11,6 @@ class Database:
     async def connect(self):
         self.pool = await asyncpg.create_pool(os.getenv("DATABASE_URL"))
 
-    # --- Секція Користувачів ---
     async def register_full_user(self, tg_id, username, first_name, last_name, institute, group):
         query = """
         INSERT INTO users (tg_id, username, first_name, last_name, institute, student_group) 
@@ -26,24 +23,35 @@ class Database:
         """
         await self.pool.execute(query, tg_id, username, first_name, last_name, institute, group)
 
-    # --- Секція Подій ---
-    async def add_event(self, title, desc, dt, price, link, card):
-        query = "INSERT INTO events (title, description, date_time, price, bank_link, card_number) VALUES ($1, $2, $3, $4, $5, $6)"
-        await self.pool.execute(query, title, desc, dt, price, link, card)
+    async def add_event(self, title, desc, dt, total_tickets, is_free, price, link, card, success_message):
+        query = """
+        INSERT INTO events (title, description, date_time, total_tickets, is_free, price, bank_link, card_number, success_message) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        """
+        await self.pool.execute(query, title, desc, dt, total_tickets, is_free, price, link, card, success_message)
 
     async def get_event(self, event_id):
-        return await self.pool.fetchrow("SELECT * FROM events WHERE id = $1", event_id)
+        query = """
+        SELECT e.*, 
+        (e.total_tickets - COALESCE((SELECT SUM(ticket_count) FROM orders WHERE event_id = e.id AND status = 'confirmed'), 0)) AS remaining_tickets
+        FROM events e WHERE e.id = $1
+        """
+        return await self.pool.fetchrow(query, event_id)
 
     async def get_user(self, tg_id):
         return await self.pool.fetchrow("SELECT * FROM users WHERE tg_id = $1", tg_id)
 
     async def get_active_events(self):
-        return await self.pool.fetch("SELECT * FROM events WHERE is_active = TRUE")
+        query = """
+        SELECT e.*, 
+        (e.total_tickets - COALESCE((SELECT SUM(ticket_count) FROM orders WHERE event_id = e.id AND status = 'confirmed'), 0)) AS remaining_tickets
+        FROM events e WHERE e.is_active = TRUE
+        """
+        return await self.pool.fetch(query)
 
     async def delete_event(self, event_id):
         await self.pool.execute("UPDATE events SET is_active = FALSE WHERE id = $1", event_id)
 
-    # --- Секція Замовлень ---
     async def add_order(self, user_id, event_id, count, file_id, f_type):
         return await self.pool.fetchval(
             "INSERT INTO orders (user_id, event_id, ticket_count, file_id, file_type) VALUES ($1, $2, $3, $4, $5) RETURNING id",

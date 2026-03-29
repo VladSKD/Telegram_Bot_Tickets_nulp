@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 from database import Database
 from states import OrderState, AddEventState, Registration
 from aiohttp import web
-import asyncio
 import sheets
 
 async def handle(request):
@@ -22,14 +21,12 @@ async def start_webhook():
     site = web.TCPSite(runner, '0.0.0.0', int(os.getenv("PORT", 8000)))
     await site.start()
 
-    
 load_dotenv()
 db = Database()
 bot = Bot(token=os.getenv("BOT_TOKEN"))
 dp = Dispatcher()
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x]
 
-# --- Кнопочки головні ---
 def main_kb(user_id):
     buttons = [[KeyboardButton(text="Доступні події")]]
     if user_id in ADMIN_IDS: 
@@ -70,20 +67,12 @@ async def process_institute(message: Message, state: FSMContext):
 async def process_group(message: Message, state: FSMContext):
     user_data = await state.get_data()
     group = message.text
-    
     await db.register_full_user(
-        tg_id=message.from_user.id,
-        username=message.from_user.username,
-        first_name=user_data['first_name'],
-        last_name=user_data['last_name'],
-        institute=user_data['institute'],
-        group=group
+        tg_id=message.from_user.id, username=message.from_user.username,
+        first_name=user_data['first_name'], last_name=user_data['last_name'],
+        institute=user_data['institute'], group=group
     )
-    
-    await message.answer(
-        f"Реєстрація успішна, {user_data['first_name']}! Тепер ти можеш купувати квитки.",
-        reply_markup=main_kb(message.from_user.id) 
-    )
+    await message.answer(f"Реєстрація успішна, {user_data['first_name']}! Тепер ти можеш купувати квитки.", reply_markup=main_kb(message.from_user.id))
     await state.clear()
 
 @dp.message(F.text == "Доступні події")
@@ -93,11 +82,22 @@ async def list_events(message: Message):
         return await message.answer("Наразі подій немає.")
     
     for ev in events:
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Купити квиток", callback_data=f"buy_{ev['id']}")]
-        ])
-        await message.answer(f"<b>{ev['title']}</b>\n {ev['date_time']}\n {ev['price']} грн\n\n{ev['description']}", 
-                           reply_markup=kb, parse_mode="HTML")
+        rem = ev['remaining_tickets']
+        # Якщо квитки закінчились - ховаємо кнопку купівлі
+        if rem <= 0:
+            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Квитків немає", callback_data="sold_out")]])
+        else:
+            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Купити квиток", callback_data=f"buy_{ev['id']}")]])
+        
+        type_str = "Безкоштовно" if ev['is_free'] else f"{ev['price']} грн"
+        await message.answer(
+            f"<b>{ev['title']}</b>\n{ev['date_time']}\n{type_str}\nЗалишилось квитків: {rem} з {ev['total_tickets']}\n\n{ev['description']}", 
+            reply_markup=kb, parse_mode="HTML"
+        )
+
+@dp.callback_query(F.data == "sold_out")
+async def handle_sold_out(callback: CallbackQuery):
+    await callback.answer("На жаль, усі квитки вже розібрали!", show_alert=True)
 
 @dp.callback_query(F.data.startswith("buy_"))
 async def start_buy(callback: CallbackQuery, state: FSMContext):
@@ -108,19 +108,31 @@ async def start_buy(callback: CallbackQuery, state: FSMContext):
 @dp.message(OrderState.waiting_for_quantity)
 async def set_qty(message: Message, state: FSMContext):
     if not message.text.isdigit(): return await message.answer("Введи число!")
-    await state.update_data(qty=int(message.text))
+    qty = int(message.text)
     data = await state.get_data()
-    
     event = await db.get_event(data['ev_id'])
-    total_price = event['price'] * int(message.text)
     
-    text = (f"Сума до оплати: <b>{total_price} грн</b>\n\n"
-            f"🔗 Банка: {event['bank_link']}\n"
-            f"💳 Картка: <code>{event['card_number']}</code>\n\n"
-            f"Скинь скріншот або PDF квитанцію.")
+    # Перевіряємо, чи є стільки квитків
+    if qty > event['remaining_tickets']:
+        return await message.answer(f"Ти не можеш взяти стільки. Залишилось всього {event['remaining_tickets']} квитків.")
     
-    await message.answer(text, parse_mode="HTML")
-    await state.set_state(OrderState.waiting_for_proof)
+    await state.update_data(qty=qty)
+    user = await db.get_user(message.from_user.id)
+    username = user['username'] if user['username'] else "Без_юзернейму"
+    
+    if event['is_free']:
+        # Для безкоштовних подій: відразу підтверджуємо
+        order_id = await db.add_order(message.from_user.id, data['ev_id'], qty, None, "free")
+        await db.update_order_status(order_id, "confirmed")
+        await sheets.add_order_to_sheet(event['title'], order_id, user['last_name'], user['first_name'], username, user['institute'], user['student_group'], qty, "Безкоштовно")
+        await message.answer(f"Реєстрація успішна!\n\n{event['success_message']}")
+        await state.clear()
+    else:
+        # Для платних: просимо скріншот
+        total_price = event['price'] * qty
+        text = (f"Сума до оплати: <b>{total_price} грн</b>\n\n🔗 Банка: {event['bank_link']}\n💳 Картка: <code>{event['card_number']}</code>\n\nСкинь скріншот або PDF квитанцію.")
+        await message.answer(text, parse_mode="HTML")
+        await state.set_state(OrderState.waiting_for_proof)
 
 @dp.message(OrderState.waiting_for_proof, F.photo | F.document)
 async def get_proof(message: Message, state: FSMContext):
@@ -129,15 +141,11 @@ async def get_proof(message: Message, state: FSMContext):
     f_type = "photo" if message.photo else "document"
     
     order_id = await db.add_order(message.from_user.id, data['ev_id'], data['qty'], f_id, f_type)
-    
     user = await db.get_user(message.from_user.id)
     event = await db.get_event(data['ev_id'])
     username = user['username'] if user['username'] else "Без_юзернейму"
     
-    await sheets.add_order_to_sheet(
-        event['title'], order_id, user['last_name'], user['first_name'], 
-        username, user['institute'], user['student_group'], data['qty'], "Очікує"
-    )
+    await sheets.add_order_to_sheet(event['title'], order_id, user['last_name'], user['first_name'], username, user['institute'], user['student_group'], data['qty'], "Очікує")
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Підтвердити", callback_data=f"conf_{order_id}")],
@@ -159,7 +167,7 @@ async def get_proof(message: Message, state: FSMContext):
     await message.answer("Очікуйте підтвердження адміном.")
     await state.clear()
 
-# --- ЛОГІКА АДМІНА (ДОДАВАННЯ ПОДІЇ) ---
+# --- ЛОГІКА АДМІНА ---
 @dp.message(F.text == "Адмін-панель", F.from_user.id.in_(ADMIN_IDS))
 async def admin_panel(message: Message):
     await message.answer("Що бажаєте зробити?", reply_markup=admin_kb())
@@ -184,11 +192,38 @@ async def add_ev_desc(message: Message, state: FSMContext):
 @dp.message(AddEventState.date_time)
 async def add_ev_dt(message: Message, state: FSMContext):
     await state.update_data(dt=message.text)
-    await message.answer("Введіть ціну (тільки число):")
-    await state.set_state(AddEventState.price)
+    await message.answer("Введіть загальну кількість квитків на подію (тільки число):")
+    await state.set_state(AddEventState.total_tickets)
+
+@dp.message(AddEventState.total_tickets)
+async def add_ev_tickets(message: Message, state: FSMContext):
+    if not message.text.isdigit(): return await message.answer("Введіть число!")
+    await state.update_data(total_tickets=int(message.text))
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Безкоштовна", callback_data="ev_free")],
+        [InlineKeyboardButton(text="Платна", callback_data="ev_paid")]
+    ])
+    await message.answer("Яка це подія?", reply_markup=kb)
+    await state.set_state(AddEventState.is_free)
+
+@dp.callback_query(AddEventState.is_free, F.data.in_(["ev_free", "ev_paid"]))
+async def set_ev_type(callback: CallbackQuery, state: FSMContext):
+    is_free = (callback.data == "ev_free")
+    await state.update_data(is_free=is_free)
+    
+    if is_free:
+        await state.update_data(price=0, link="", card="")
+        await callback.message.answer("Введіть фінальне повідомлення (напр. 'Забирай квиток в 218 кабінеті'):")
+        await state.set_state(AddEventState.success_message)
+    else:
+        await callback.message.answer("Введіть ціну (тільки число):")
+        await state.set_state(AddEventState.price)
+    await callback.answer()
 
 @dp.message(AddEventState.price)
 async def add_ev_price(message: Message, state: FSMContext):
+    if not message.text.isdigit(): return await message.answer("Введіть число!")
     await state.update_data(price=int(message.text))
     await message.answer("Введіть посилання на банку Monobank:")
     await state.set_state(AddEventState.bank_link)
@@ -200,9 +235,15 @@ async def add_ev_link(message: Message, state: FSMContext):
     await state.set_state(AddEventState.card_number)
 
 @dp.message(AddEventState.card_number)
+async def add_ev_card(message: Message, state: FSMContext):
+    await state.update_data(card=message.text)
+    await message.answer("Введіть фінальне повідомлення після підтвердження оплати (напр. 'Забирай квиток в 218 кабінеті'):")
+    await state.set_state(AddEventState.success_message)
+
+@dp.message(AddEventState.success_message)
 async def add_ev_final(message: Message, state: FSMContext):
     d = await state.get_data()
-    await db.add_event(d['title'], d['desc'], d['dt'], d['price'], d['link'], message.text)
+    await db.add_event(d['title'], d['desc'], d['dt'], d['total_tickets'], d['is_free'], d['price'], d.get('link', ''), d.get('card', ''), message.text)
     await message.answer("Подію успішно додано!", reply_markup=main_kb(message.from_user.id))
     await state.clear()
 
@@ -217,12 +258,8 @@ async def handle_decision(callback: CallbackQuery):
     if action == "conf":
         await db.update_order_status(order_id, "confirmed")
         await sheets.update_payment_in_sheet(event['title'], order_id, "Підтверджено")
-        await bot.send_message(order['user_id'], "Твоя оплата підтверджена! Квиток чекає на тебе.")
-        
-        give_kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Відмітити квитки як ВИДАНІ", callback_data=f"given_{order_id}")]
-        ])
-        await callback.message.edit_reply_markup(reply_markup=give_kb)
+        await bot.send_message(order['user_id'], f"Твоя оплата підтверджена!\n\n{event['success_message']}")
+        await callback.message.edit_reply_markup(reply_markup=None)
         await callback.answer("Оплата підтверджена!")
     else:
         await sheets.update_payment_in_sheet(event['title'], order_id, "Відхилено")
@@ -230,24 +267,9 @@ async def handle_decision(callback: CallbackQuery):
         await callback.message.edit_reply_markup(reply_markup=None)
         await callback.message.reply("Замовлення відхилено.")
 
-@dp.callback_query(F.data.startswith("given_"))
-async def mark_ticket_given(callback: CallbackQuery):
-    order_id = int(callback.data.split("_")[1])
-    order = await db.get_order(order_id)
-    event = await db.get_event(order['event_id'])
-    
-    await db.pool.execute("UPDATE orders SET is_ticket_given = TRUE WHERE id = $1", order_id)
-    
-    await sheets.update_ticket_in_sheet(event['title'], order_id, "Так")
-    
-    await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.reply(f"Квитки для замовлення #{order_id} успішно видані студенту!")
-
 async def main():
     await db.connect()
     asyncio.create_task(start_webhook()) 
-    await dp.start_polling(bot)
-    await db.connect()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
