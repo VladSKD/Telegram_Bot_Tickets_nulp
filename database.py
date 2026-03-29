@@ -51,6 +51,12 @@ class Database:
 
     async def delete_event(self, event_id):
         await self.pool.execute("UPDATE events SET is_active = FALSE WHERE id = $1", event_id)
+        
+    async def update_event_field(self, event_id, field_name, new_value):
+        allowed_fields = ['title', 'description', 'date_time', 'total_tickets', 'price', 'bank_link', 'card_number', 'success_message']
+        if field_name in allowed_fields:
+            query = f"UPDATE events SET {field_name} = $1 WHERE id = $2"
+            await self.pool.execute(query, new_value, event_id)
 
     async def add_order(self, user_id, event_id, count, file_id, f_type):
         return await self.pool.fetchval(

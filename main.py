@@ -6,7 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from dotenv import load_dotenv
 from database import Database
-from states import OrderState, AddEventState, Registration
+from states import AdminEdit, OrderState, AddEventState, Registration
 from aiohttp import web
 import sheets
 
@@ -36,6 +36,7 @@ def main_kb(user_id):
 def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Додати подію", callback_data="admin_add_event")],
+        [InlineKeyboardButton(text="Редагувати подію", callback_data="admin_edit_list")],
         [InlineKeyboardButton(text="Видалити подію", callback_data="admin_del_list")]
     ])
 
@@ -246,6 +247,84 @@ async def add_ev_final(message: Message, state: FSMContext):
     await db.add_event(d['title'], d['desc'], d['dt'], d['total_tickets'], d['is_free'], d['price'], d.get('link', ''), d.get('card', ''), message.text)
     await message.answer("Подію успішно додано!", reply_markup=main_kb(message.from_user.id))
     await state.clear()
+
+@dp.callback_query(F.data == "admin_del_list")
+async def show_delete_list(callback: CallbackQuery):
+    events = await db.get_active_events()
+    if not events:
+        return await callback.message.answer("Немає активних подій для видалення.")
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"{ev['title']}", callback_data=f"del_{ev['id']}")] for ev in events
+    ])
+    await callback.message.answer("Оберіть подію, яку хочете ВИДАЛИТИ:", reply_markup=kb)
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("del_"))
+async def confirm_delete(callback: CallbackQuery):
+    event_id = int(callback.data.split("_")[1])
+    await db.delete_event(event_id)
+    await callback.message.edit_text("Подію успішно видалено! (Вона більше не показуватиметься студентам).")
+    await callback.answer("Видалено")
+
+# --- РЕДАГУВАННЯ ПОДІЇ ---
+@dp.callback_query(F.data == "admin_edit_list")
+async def show_edit_list(callback: CallbackQuery, state: FSMContext):
+    events = await db.get_active_events()
+    if not events:
+        return await callback.message.answer("Немає активних подій для редагування.")
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"{ev['title']}", callback_data=f"edit_{ev['id']}")] for ev in events
+    ])
+    await callback.message.answer("Оберіть подію для РЕДАГУВАННЯ:", reply_markup=kb)
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("edit_"))
+async def select_field_to_edit(callback: CallbackQuery, state: FSMContext):
+    event_id = int(callback.data.split("_")[1])
+    await state.update_data(edit_ev_id=event_id)
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Назву", callback_data="field_title"), InlineKeyboardButton(text="Опис", callback_data="field_description")],
+        [InlineKeyboardButton(text="Дату/Час", callback_data="field_date_time"), InlineKeyboardButton(text="К-сть квитків", callback_data="field_total_tickets")],
+        [InlineKeyboardButton(text="Ціну", callback_data="field_price"), InlineKeyboardButton(text="Повідомлення", callback_data="field_success_message")]
+    ])
+    await callback.message.edit_text("Що саме ви хочете змінити?", reply_markup=kb)
+    await state.set_state(AdminEdit.select_field)
+
+@dp.callback_query(AdminEdit.select_field, F.data.startswith("field_"))
+async def enter_new_value(callback: CallbackQuery, state: FSMContext):
+    field_name = callback.data.replace("field_", "")
+    await state.update_data(edit_field=field_name)
+    
+    names_ua = {
+        "title": "нову НАЗВУ", "description": "новий ОПИС", 
+        "date_time": "нову ДАТУ та ЧАС", "total_tickets": "нову загальну КІЛЬКІСТЬ КВИТКІВ (число)",
+        "price": "нову ЦІНУ (число)", "success_message": "нове ФІНАЛЬНЕ ПОВІДОМЛЕННЯ"
+    }
+    
+    await callback.message.edit_text(f"Введіть {names_ua.get(field_name, 'нове значення')}:")
+    await state.set_state(AdminEdit.enter_value)
+
+@dp.message(AdminEdit.enter_value)
+async def save_new_value(message: Message, state: FSMContext):
+    data = await state.get_data()
+    event_id = data['edit_ev_id']
+    field_name = data['edit_field']
+    new_value = message.text
+    
+    # Якщо це числові поля - конвертуємо в int
+    if field_name in ['total_tickets', 'price']:
+        if not new_value.isdigit():
+            return await message.answer("Помилка! Це поле має бути числом. Введіть ще раз:")
+        new_value = int(new_value)
+        
+    await db.update_event_field(event_id, field_name, new_value)
+    
+    await message.answer("Зміни успішно збережено!")
+    await state.clear()
+
 
 # --- ПІДТВЕРДЖЕННЯ ОПЛАТИ ---
 @dp.callback_query(F.data.startswith("conf_") | F.data.startswith("reje_"))

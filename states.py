@@ -20,3 +20,11 @@ class AddEventState(StatesGroup):
     bank_link = State()
     card_number = State()
     success_message = State() 
+    
+class AdminDelete(StatesGroup):
+    confirm = State()
+
+class AdminEdit(StatesGroup):
+    select_event = State()
+    select_field = State()
+    enter_value = State()
