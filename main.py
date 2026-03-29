@@ -166,7 +166,7 @@ async def list_events(message: Message):
         else:
             kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🎟 Купити квиток", callback_data=f"buy_{ev['id']}")]])
         
-        type_str = "🎁 <i>Безкоштовно</i>" if ev['is_free'] else f"💰 <b>{ev['price']}</b>"
+        type_str = "<i>Безкоштовно</i>" if ev['is_free'] else f"<b>{ev['price']}</b>"
         
         event_text = (
             f"🎉 <b>{ev['title']}</b>\n\n"
@@ -267,10 +267,10 @@ async def get_proof(message: Message, state: FSMContext):
     ])
     
     caption = (
-        f"🚨 <b>Нова оплата #{order_id}!</b>\n\n"
-        f"👤 <b>Студент:</b> {user['last_name']} {user['first_name']} (@{username})\n"
-        f"📚 <b>Група:</b> {user['institute']}, {user['student_group']}\n"
-        f"🎟 <b>Кількість квитків:</b> {data['qty']} шт."
+        f"🚨 Нова оплата #{order_id}!\n\n"
+        f"👤 Студент: {user['last_name']} {user['first_name']} (@{username})\n"
+        f"📚 Група: {user['institute']}, {user['student_group']}\n"
+        f"🎟 Кількість квитків: {data['qty']} шт."
     )
                
     for admin in ADMIN_IDS:
