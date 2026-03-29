@@ -15,11 +15,12 @@ class AddEventState(StatesGroup):
     description = State()
     date_time = State()
     total_tickets = State() 
-    is_free = State()       
+    is_free = State()
+    price_type = State() 
     price = State()
     bank_link = State()
     card_number = State()
-    success_message = State() 
+    success_message = State()
     
 class AdminDelete(StatesGroup):
     confirm = State()

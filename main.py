@@ -84,7 +84,6 @@ async def list_events(message: Message):
     
     for ev in events:
         rem = ev['remaining_tickets']
-        # Якщо квитки закінчились - ховаємо кнопку купівлі
         if rem <= 0:
             kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Квитків немає", callback_data="sold_out")]])
         else:
@@ -108,12 +107,17 @@ async def start_buy(callback: CallbackQuery, state: FSMContext):
 
 @dp.message(OrderState.waiting_for_quantity)
 async def set_qty(message: Message, state: FSMContext):
-    if not message.text.isdigit(): return await message.answer("Введи число!")
+    if message.text == "Доступні події":
+        await state.clear()
+        return await list_events(message)
+
+    if not message.text.isdigit() or int(message.text) <= 0: 
+        return await message.answer("Будь ласка, введи коректне число квитків (більше нуля)!")
+        
     qty = int(message.text)
     data = await state.get_data()
     event = await db.get_event(data['ev_id'])
     
-    # Перевіряємо, чи є стільки квитків
     if qty > event['remaining_tickets']:
         return await message.answer(f"Ти не можеш взяти стільки. Залишилось всього {event['remaining_tickets']} квитків.")
     
@@ -122,16 +126,23 @@ async def set_qty(message: Message, state: FSMContext):
     username = user['username'] if user['username'] else "Без_юзернейму"
     
     if event['is_free']:
-        # Для безкоштовних подій: відразу підтверджуємо
         order_id = await db.add_order(message.from_user.id, data['ev_id'], qty, None, "free")
         await db.update_order_status(order_id, "confirmed")
         await sheets.add_order_to_sheet(event['title'], order_id, user['last_name'], user['first_name'], username, user['institute'], user['student_group'], qty, "Безкоштовно")
         await message.answer(f"Реєстрація успішна!\n\n{event['success_message']}")
         await state.clear()
     else:
-        # Для платних: просимо скріншот
-        total_price = event['price'] * qty
-        text = (f"Сума до оплати: <b>{total_price} грн</b>\n\n🔗 Банка: {event['bank_link']}\n💳 Картка: <code>{event['card_number']}</code>\n\nСкинь скріншот або PDF квитанцію.")
+        if event['is_fixed_price']:
+            total_price = int(event['price']) * qty
+            text = (f"🎟 Замовлення: <b>{qty} шт.</b>\n"
+                    f"💰 До оплати: <b>{total_price} грн</b> (по {event['price']} грн/шт)\n\n"
+                    f"🔗 Банка: {event['bank_link']}\n💳 Картка: <code>{event['card_number']}</code>\n\nСкинь скріншот або PDF квитанцію.")
+        else:
+            text = (f"🎟 Замовлення: <b>{qty} шт.</b>\n"
+                    f"💰 Вказана ціна: <b>{event['price']}</b>\n\n"
+                    f"⚠️ Уважно розрахуй загальну суму та оплати!\n\n"
+                    f"🔗 Банка: {event['bank_link']}\n💳 Картка: <code>{event['card_number']}</code>\n\nСкинь скріншот або PDF квитанцію.")
+                    
         await message.answer(text, parse_mode="HTML")
         await state.set_state(OrderState.waiting_for_proof)
 
@@ -168,6 +179,16 @@ async def get_proof(message: Message, state: FSMContext):
     await message.answer("Очікуйте підтвердження адміном.")
     await state.clear()
 
+
+@dp.message(OrderState.waiting_for_proof)
+async def wrong_proof_format(message: Message, state: FSMContext):
+    if message.text in ["Доступні події", "Адмін-панель"]:
+        await state.clear()
+        if message.text == "Доступні події": return await list_events(message)
+        else: return await admin_panel(message)
+        
+    await message.answer("❌ Будь ласка, надішли скріншот або PDF-файл квитанції! Текст, стікери чи відео не приймаються.")
+
 # --- ЛОГІКА АДМІНА ---
 @dp.message(F.text == "Адмін-панель", F.from_user.id.in_(ADMIN_IDS))
 async def admin_panel(message: Message):
@@ -198,7 +219,8 @@ async def add_ev_dt(message: Message, state: FSMContext):
 
 @dp.message(AddEventState.total_tickets)
 async def add_ev_tickets(message: Message, state: FSMContext):
-    if not message.text.isdigit(): return await message.answer("Введіть число!")
+    if not message.text.isdigit() or int(message.text) <= 0: 
+        return await message.answer("Введіть ціле додатнє число (більше нуля)!")
     await state.update_data(total_tickets=int(message.text))
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -214,13 +236,41 @@ async def set_ev_type(callback: CallbackQuery, state: FSMContext):
     await state.update_data(is_free=is_free)
     
     if is_free:
-        await state.update_data(price=0, link="", card="")
+        await state.update_data(is_fixed_price=True, price="0", link="", card="")
         await callback.message.answer("Введіть фінальне повідомлення (напр. 'Забирай квиток в 218 кабінеті'):")
         await state.set_state(AddEventState.success_message)
     else:
-        await callback.message.answer("Введіть ціну (тільки число):")
-        await state.set_state(AddEventState.price)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Фіксована ціна", callback_data="price_fixed")],
+            [InlineKeyboardButton(text="Гнучка ціна (текст)", callback_data="price_flex")]
+        ])
+        await callback.message.answer("Який формат ціни буде у події?", reply_markup=kb)
+        await state.set_state(AddEventState.price_type)
     await callback.answer()
+
+@dp.callback_query(AddEventState.price_type, F.data.in_(["price_fixed", "price_flex"]))
+async def set_price_type(callback: CallbackQuery, state: FSMContext):
+    is_fixed = (callback.data == "price_fixed")
+    await state.update_data(is_fixed_price=is_fixed)
+    
+    if is_fixed:
+        await callback.message.answer("Введіть ціну за 1 квиток (ТІЛЬКИ ЧИСЛО, напр. 150):")
+    else:
+        await callback.message.answer("Введіть текст ціни (напр. 'від 100 грн' або 'донат від 50 грн'):")
+    
+    await state.set_state(AddEventState.price)
+    await callback.answer()
+
+@dp.message(AddEventState.price)
+async def add_ev_price(message: Message, state: FSMContext):
+    data = await state.get_data()
+    # Якщо вибрали фіксовану ціну, не даємо ввести букви
+    if data.get('is_fixed_price') and not message.text.isdigit():
+        return await message.answer("Помилка! Для фіксованої ціни введіть ТІЛЬКИ ЧИСЛО:")
+        
+    await state.update_data(price=message.text)
+    await message.answer("Введіть посилання на банку Monobank:")
+    await state.set_state(AddEventState.bank_link)
 
 @dp.message(AddEventState.price)
 async def add_ev_price(message: Message, state: FSMContext):
@@ -244,8 +294,8 @@ async def add_ev_card(message: Message, state: FSMContext):
 @dp.message(AddEventState.success_message)
 async def add_ev_final(message: Message, state: FSMContext):
     d = await state.get_data()
-    await db.add_event(d['title'], d['desc'], d['dt'], d['total_tickets'], d['is_free'], d['price'], d.get('link', ''), d.get('card', ''), message.text)
-    await message.answer("Подію успішно додано!", reply_markup=main_kb(message.from_user.id))
+    await db.add_event(d['title'], d['desc'], d['dt'], d['total_tickets'], d['is_free'], d['is_fixed_price'], d['price'], d.get('link', ''), d.get('card', ''), message.text)
+    await message.answer("✅ Подію успішно додано!", reply_markup=main_kb(message.from_user.id))
     await state.clear()
 
 @dp.callback_query(F.data == "admin_del_list")
@@ -314,11 +364,16 @@ async def save_new_value(message: Message, state: FSMContext):
     field_name = data['edit_field']
     new_value = message.text
     
-    # Якщо це числові поля - конвертуємо в int
-    if field_name in ['total_tickets', 'price']:
-        if not new_value.isdigit():
-            return await message.answer("Помилка! Це поле має бути числом. Введіть ще раз:")
+    event = await db.get_event(event_id)
+    
+    if field_name == 'total_tickets':
+        if not new_value.isdigit() or int(new_value) <= 0:
+            return await message.answer("Помилка! Введіть додатнє число більше нуля:")
         new_value = int(new_value)
+        
+    if field_name == 'price' and event.get('is_fixed_price'):
+        if not new_value.isdigit() or int(new_value) < 0:
+            return await message.answer("Помилка! Для фіксованої ціни введіть тільки число (0 або більше):")
         
     await db.update_event_field(event_id, field_name, new_value)
     
@@ -345,6 +400,10 @@ async def handle_decision(callback: CallbackQuery):
         await bot.send_message(order['user_id'], "Оплата не підтверджена. Перевір дані або напиши адміну.")
         await callback.message.edit_reply_markup(reply_markup=None)
         await callback.message.reply("Замовлення відхилено.")
+
+@dp.message()
+async def global_fallback(message: Message, state: FSMContext):
+    await message.answer("🤷‍♂️ Я не розумію цю команду або формат. Будь ласка, користуйся кнопками меню!", reply_markup=main_kb(message.from_user.id))
 
 async def main():
     await db.connect()
