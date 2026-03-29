@@ -86,7 +86,7 @@ async def process_group(message: Message, state: FSMContext):
     )
     await state.clear()
 
-@dp.message(F.text == "🎟 Доступні події")
+@dp.message(F.text == "Доступні події")
 async def list_events(message: Message):
     events = await db.get_active_events()
     if not events:
