@@ -346,12 +346,20 @@ async def select_field_to_edit(callback: CallbackQuery, state: FSMContext):
 @dp.callback_query(AdminEdit.select_field, F.data.startswith("field_"))
 async def enter_new_value(callback: CallbackQuery, state: FSMContext):
     field_name = callback.data.replace("field_", "")
+    data = await state.get_data()
+    event_id = data['edit_ev_id']
+    
+    event = await db.get_event(event_id)
+    
+    if field_name == "price" and event['is_free']:
+        return await callback.answer("❌ Це безкоштовна подія! Ціну змінити неможливо.", show_alert=True)
+        
     await state.update_data(edit_field=field_name)
     
     names_ua = {
         "title": "нову НАЗВУ", "description": "новий ОПИС", 
         "date_time": "нову ДАТУ та ЧАС", "total_tickets": "нову загальну КІЛЬКІСТЬ КВИТКІВ (число)",
-        "price": "нову ЦІНУ (число)", "success_message": "нове ФІНАЛЬНЕ ПОВІДОМЛЕННЯ"
+        "price": "нову ЦІНУ", "success_message": "нове ФІНАЛЬНЕ ПОВІДОМЛЕННЯ"
     }
     
     await callback.message.edit_text(f"Введіть {names_ua.get(field_name, 'нове значення')}:")
@@ -364,20 +372,26 @@ async def save_new_value(message: Message, state: FSMContext):
     field_name = data['edit_field']
     new_value = message.text
     
+    # Дістаємо подію з бази
     event = await db.get_event(event_id)
+    
+    # 🛑 ДРУГИЙ РУБІЖ: Якщо якось дійшли сюди, а подія безкоштовна
+    if field_name == 'price' and event['is_free']:
+        await state.clear()
+        return await message.answer("❌ Помилка! Ця подія безкоштовна. Зміна ціни скасована.")
     
     if field_name == 'total_tickets':
         if not new_value.isdigit() or int(new_value) <= 0:
-            return await message.answer("Помилка! Введіть додатнє число більше нуля:")
+            return await message.answer("❌ Помилка! Введіть додатнє число більше нуля:")
         new_value = int(new_value)
         
     if field_name == 'price' and event.get('is_fixed_price'):
         if not new_value.isdigit() or int(new_value) < 0:
-            return await message.answer("Помилка! Для фіксованої ціни введіть тільки число (0 або більше):")
+            return await message.answer("❌ Помилка! Для фіксованої ціни введіть тільки число (0 або більше):")
         
     await db.update_event_field(event_id, field_name, new_value)
     
-    await message.answer("Зміни успішно збережено!")
+    await message.answer("✅ Зміни успішно збережено!")
     await state.clear()
 
 
