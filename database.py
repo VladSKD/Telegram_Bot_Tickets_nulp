@@ -23,14 +23,12 @@ class Database:
         """
         await self.pool.execute(query, tg_id, username, first_name, last_name, institute, group)
 
-    async def add_event(self, title, desc, dt, location, total_tickets, is_free, price, link, card, success_message):
+    async def add_event(self, title, desc, photo_id, dt, location, total_tickets, is_free, price, link, card, success_message):
         query = """
-        INSERT INTO events (title, description, date_time, location, total_tickets, is_free, price, bank_link, card_number, success_message) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        INSERT INTO events (title, description, photo_id, date_time, location, total_tickets, is_free, price, bank_link, card_number, success_message) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         """
-        await self.pool.execute(query, title, desc, dt, location, total_tickets, is_free, price, link, card, success_message)
-
-    
+        await self.pool.execute(query, title, desc, photo_id, dt, location, total_tickets, is_free, price, link, card, success_message)
 
     async def get_event(self, event_id):
         query = """
@@ -55,7 +53,7 @@ class Database:
         await self.pool.execute("UPDATE events SET is_active = FALSE WHERE id = $1", event_id)
         
     async def update_event_field(self, event_id, field_name, new_value):
-        allowed_fields = ['title', 'description', 'date_time', 'location', 'total_tickets', 'price', 'bank_link', 'card_number', 'success_message']
+        allowed_fields = ['title', 'description', 'photo_id', 'date_time', 'location', 'total_tickets', 'price', 'bank_link', 'card_number', 'success_message']
         if field_name in allowed_fields:
             query = f"UPDATE events SET {field_name} = $1 WHERE id = $2"
             await self.pool.execute(query, new_value, event_id)
@@ -92,3 +90,14 @@ class Database:
         query = f"UPDATE users SET {column} = $1 WHERE tg_id = $2"
 
         await self.pool.execute(query, new_value, tg_id)
+        
+    async def get_all_users(self):
+        return await self.pool.fetch("SELECT tg_id FROM users")
+
+    async def get_users_by_event(self, event_id):
+        query = """
+        SELECT DISTINCT user_tg_id as tg_id 
+        FROM orders 
+        WHERE event_id = $1 AND status = 'confirmed'
+        """
+        return await self.pool.fetch(query, event_id)

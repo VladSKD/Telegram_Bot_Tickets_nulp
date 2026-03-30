@@ -1,6 +1,9 @@
 from aiogram.fsm.state import State, StatesGroup
 
-
+class AdminBroadcast(StatesGroup):
+    choose_audience = State() 
+    waiting_for_message = State() 
+    
 class Registration(StatesGroup):
     waiting_for_last_name = State()
     waiting_for_first_name = State()
@@ -17,6 +20,7 @@ class OrderState(StatesGroup):
 
 class AddEventState(StatesGroup):
     title = State()
+    photo = State() 
     description = State()
     date_time = State()
     location = State() 
