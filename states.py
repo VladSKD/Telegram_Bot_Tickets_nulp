@@ -19,6 +19,7 @@ class AddEventState(StatesGroup):
     title = State()
     description = State()
     date_time = State()
+    location = State() 
     total_tickets = State() 
     is_free = State()
     price_type = State() 

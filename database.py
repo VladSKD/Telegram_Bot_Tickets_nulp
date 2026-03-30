@@ -23,12 +23,14 @@ class Database:
         """
         await self.pool.execute(query, tg_id, username, first_name, last_name, institute, group)
 
-    async def add_event(self, title, desc, dt, total_tickets, is_free, is_fixed_price, price, link, card, success_message):
+    async def add_event(self, title, desc, dt, location, total_tickets, is_free, price, link, card, success_message):
         query = """
-        INSERT INTO events (title, description, date_time, total_tickets, is_free, is_fixed_price, price, bank_link, card_number, success_message) 
+        INSERT INTO events (title, description, date_time, location, total_tickets, is_free, price, bank_link, card_number, success_message) 
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         """
-        await self.pool.execute(query, title, desc, dt, total_tickets, is_free, is_fixed_price, price, link, card, success_message)
+        await self.pool.execute(query, title, desc, dt, location, total_tickets, is_free, price, link, card, success_message)
+
+    
 
     async def get_event(self, event_id):
         query = """
@@ -53,7 +55,7 @@ class Database:
         await self.pool.execute("UPDATE events SET is_active = FALSE WHERE id = $1", event_id)
         
     async def update_event_field(self, event_id, field_name, new_value):
-        allowed_fields = ['title', 'description', 'date_time', 'total_tickets', 'price', 'bank_link', 'card_number', 'success_message']
+        allowed_fields = ['title', 'description', 'date_time', 'location', 'total_tickets', 'price', 'bank_link', 'card_number', 'success_message']
         if field_name in allowed_fields:
             query = f"UPDATE events SET {field_name} = $1 WHERE id = $2"
             await self.pool.execute(query, new_value, event_id)

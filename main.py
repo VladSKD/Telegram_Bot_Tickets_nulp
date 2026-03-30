@@ -171,6 +171,7 @@ async def list_events(message: Message):
         event_text = (
             f"🎉 <b>{ev['title']}</b>\n\n"
             f"📅 <b>Коли:</b> {ev['date_time']}\n"
+            f"📍 <b>Локація:</b> {ev['location']}\n"  
             f"💵 <b>Вартість:</b> {type_str}\n"
             f"📊 <b>Залишилось квитків:</b> {rem} з {ev['total_tickets']}\n\n"
             f"📝 <b>Опис:</b>\n<i>{ev['description']}</i>"
@@ -319,6 +320,12 @@ async def add_ev_desc(message: Message, state: FSMContext):
 @dp.message(AddEventState.date_time)
 async def add_ev_dt(message: Message, state: FSMContext):
     await state.update_data(dt=message.text)
+    await message.answer("Введіть локацію проведення (напр. 'Актова зала' або 'Студентський простір'):")
+    await state.set_state(AddEventState.location)
+
+@dp.message(AddEventState.location)
+async def add_ev_location(message: Message, state: FSMContext):
+    await state.update_data(location=message.text)
     await message.answer("Введіть загальну кількість квитків на подію (тільки число):")
     await state.set_state(AddEventState.total_tickets)
 
@@ -394,7 +401,7 @@ async def add_ev_card(message: Message, state: FSMContext):
 @dp.message(AddEventState.success_message)
 async def add_ev_final(message: Message, state: FSMContext):
     d = await state.get_data()
-    await db.add_event(d['title'], d['desc'], d['dt'], d['total_tickets'], d['is_free'], d['is_fixed_price'], d['price'], d.get('link', ''), d.get('card', ''), message.text)
+    await db.add_event(d['title'], d['desc'], d['dt'], d['location'], d['total_tickets'], d['is_free'], d['price'], d.get('link', ''), d.get('card', ''), message.text)
     await message.answer("✅ Подію успішно додано!", reply_markup=main_kb(message.from_user.id))
     await state.clear()
 
@@ -437,8 +444,9 @@ async def select_field_to_edit(callback: CallbackQuery, state: FSMContext):
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Назву", callback_data="field_title"), InlineKeyboardButton(text="Опис", callback_data="field_description")],
-        [InlineKeyboardButton(text="Дату/Час", callback_data="field_date_time"), InlineKeyboardButton(text="К-сть квитків", callback_data="field_total_tickets")],
-        [InlineKeyboardButton(text="Ціну", callback_data="field_price"), InlineKeyboardButton(text="Повідомлення", callback_data="field_success_message")]
+        [InlineKeyboardButton(text="Дату/Час", callback_data="field_date_time"), InlineKeyboardButton(text="Локацію", callback_data="field_location")],
+        [InlineKeyboardButton(text="К-сть квитків", callback_data="field_total_tickets"), InlineKeyboardButton(text="Ціну", callback_data="field_price")],
+        [InlineKeyboardButton(text="Повідомлення", callback_data="field_success_message")]
     ])
     await callback.message.edit_text("Що саме ви хочете змінити?", reply_markup=kb)
     await state.set_state(AdminEdit.select_field)
@@ -452,13 +460,14 @@ async def enter_new_value(callback: CallbackQuery, state: FSMContext):
     event = await db.get_event(event_id)
     
     if field_name == "price" and event['is_free']:
-        return await callback.answer("❌ Це безкоштовна подія! Змінити ціну неможливо.", show_alert=True)
+        return await callback.answer("❌ Це безкоштовна подія! Ціну змінити неможливо.", show_alert=True)
         
     await state.update_data(edit_field=field_name)
     
     names_ua = {
         "title": "нову НАЗВУ", "description": "новий ОПИС", 
-        "date_time": "нову ДАТУ та ЧАС", "total_tickets": "нову загальну КІЛЬКІСТЬ КВИТКІВ (число)",
+        "date_time": "нову ДАТУ та ЧАС", "location": "нову ЛОКАЦІЮ", 
+        "total_tickets": "нову загальну КІЛЬКІСТЬ КВИТКІВ (число)",
         "price": "нову ЦІНУ", "success_message": "нове ФІНАЛЬНЕ ПОВІДОМЛЕННЯ"
     }
     
