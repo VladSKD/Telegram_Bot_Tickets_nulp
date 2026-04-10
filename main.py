@@ -203,7 +203,7 @@ async def start_buy(callback: CallbackQuery, state: FSMContext):
     # 👈 Перевіряємо параметр з бази
     if event.get('venue_type') == 'organ_hall':
         # СЮДИ ВСТАВИШ ПОСИЛАННЯ НА СВІЙ REACT ДОДАТОК (через ngrok для тестів)
-        web_app_url = "https://earthy-dismantle-udder.ngrok-free.dev"
+        web_app_url = "https://telegram-bot-tickets-nulp.vercel.app/"
         
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
