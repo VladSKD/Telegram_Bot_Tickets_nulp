@@ -10,9 +10,7 @@ from states import AdminBroadcast, AdminEdit, EditProfile, OrderState, AddEventS
 from aiohttp import web
 import sheets
 import json
-import qrcode
-from io import BytesIO
-from aiogram.types import WebAppInfo, BufferedInputFile
+from aiogram.types import WebAppInfo
 
 async def handle(request):
     return web.Response(text="Bot is alive!")
