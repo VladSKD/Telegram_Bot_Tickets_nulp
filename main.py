@@ -9,6 +9,10 @@ from database import Database
 from states import AdminBroadcast, AdminEdit, EditProfile, OrderState, AddEventState, Registration
 from aiohttp import web
 import sheets
+import json
+import qrcode
+from io import BytesIO
+from aiogram.types import WebAppInfo, BufferedInputFile
 
 async def handle(request):
     return web.Response(text="Bot is alive!")
@@ -193,9 +197,67 @@ async def handle_sold_out(callback: CallbackQuery):
 async def start_buy(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_reply_markup(reply_markup=None)
     
-    await state.update_data(ev_id=int(callback.data.split("_")[1]))
-    await callback.message.answer("🛒 <b>Скільки квитків беремо?</b>\n<i>Напиши просто число (наприклад: 1, 2):</i>", parse_mode="HTML")
-    await state.set_state(OrderState.waiting_for_quantity)
+    event_id = int(callback.data.split("_")[1])
+    await state.update_data(ev_id=event_id)
+    
+    event = await db.get_event(event_id)
+    
+    # 👈 Перевіряємо параметр з бази
+    if event.get('venue_type') == 'organ_hall':
+        # СЮДИ ВСТАВИШ ПОСИЛАННЯ НА СВІЙ REACT ДОДАТОК (через ngrok для тестів)
+        web_app_url = "https://earthy-dismantle-udder.ngrok-free.dev"
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="🗺 Обрати місця на схемі", 
+                web_app=WebAppInfo(url=web_app_url)
+            )]
+        ])
+        await callback.message.answer("Обери бажані місця на інтерактивній схемі залу 👇", reply_markup=kb)
+    else:
+        # СТАРА ЛОГІКА ДЛЯ ЗВИЧАЙНИХ ПОДІЙ
+        await callback.message.answer("🛒 <b>Скільки квитків беремо?</b>\n<i>Напиши просто число (наприклад: 1, 2):</i>", parse_mode="HTML")
+        await state.set_state(OrderState.waiting_for_quantity)
+
+
+# Обробка даних від React додатку (Без QR-кодів)
+@dp.message(F.web_app_data)
+async def handle_web_app_data(message: Message, state: FSMContext):
+    data_from_react = message.web_app_data.data
+    selected_seats = json.loads(data_from_react)
+    
+    data = await state.get_data()
+    event_id = data.get('ev_id')
+    user_id = message.from_user.id
+    
+    user = await db.get_user(user_id)
+    event = await db.get_event(event_id)
+    username = user['username'] if user['username'] else "Без_юзернейму"
+    qty = len(selected_seats)
+    
+    # Створюємо одне замовлення в базі на загальну кількість квитків
+    order_id = await db.add_order(user_id, event_id, qty, None, "free_seating")
+    await db.update_order_status(order_id, "confirmed")
+    
+    # Формуємо списки місць для таблиці та для повідомлення юзеру
+    seats_str = ", ".join([f"Р{s['row']}М{s['seat']}" for s in selected_seats])
+    formatted_seats = "\n".join([f"📍 Ряд: <b>{s['row']}</b>, Місце: <b>{s['seat']}</b>" for s in selected_seats])
+    
+    # Записуємо в Google Таблицю
+    await sheets.add_order_to_sheet(
+        event['title'], order_id, user['last_name'], user['first_name'], 
+        username, user['institute'], user['student_group'], qty, f"Місця: {seats_str}"
+    )
+
+    # Відправляємо фінальне повідомлення (БЕЗ картинок)
+    await message.answer(
+        f"✅ <b>Бронювання успішне!</b>\n\n"
+        f"🎟 <b>Твої місця ({qty} шт.):</b>\n{formatted_seats}\n\n"
+        f"📌 {event['success_message']}\n\n"
+        f"<i>Офіційні QR-коди для входу будуть надані організаторами.</i>", 
+        parse_mode="HTML"
+    )
+    await state.clear()
 
 @dp.message(OrderState.waiting_for_quantity)
 async def set_qty(message: Message, state: FSMContext):
@@ -337,7 +399,21 @@ async def add_ev_desc(message: Message, state: FSMContext):
 @dp.message(AddEventState.date_time)
 async def add_ev_dt(message: Message, state: FSMContext):
     await state.update_data(dt=message.text)
-    await message.answer("Введіть локацію проведення (напр. 'Актова зала' або 'Студентський простір'):")
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎹 Органний зал (з вибором місць)", callback_data="venue_organ_hall")],
+        [InlineKeyboardButton(text="🏢 Інше / Немає значення", callback_data="venue_other")]
+    ])
+    
+    await message.answer("Обери тип локації (це вплине на те, чи буде доступний інтерактивний вибір місць):", reply_markup=kb)
+    await state.set_state(AddEventState.venue_type)
+
+@dp.callback_query(AddEventState.venue_type, F.data.startswith("venue_"))
+async def add_ev_venue_type(callback: CallbackQuery, state: FSMContext):
+    venue_type = callback.data.replace("venue_", "") 
+    await state.update_data(venue_type=venue_type)
+    
+    await callback.message.edit_text("Тепер введи точне місце проведення текстом (напр. 'Актова зала' або 'Вул. Бандери, 8'):")
     await state.set_state(AddEventState.location)
 
 @dp.message(AddEventState.location)
@@ -417,7 +493,8 @@ async def add_ev_card(message: Message, state: FSMContext):
 @dp.message(AddEventState.success_message)
 async def add_ev_final(message: Message, state: FSMContext):
     d = await state.get_data()
-    await db.add_event(d['title'], d['desc'], d['photo_id'], d['dt'], d['location'], d['total_tickets'], d['is_free'], d['price'], d.get('link', ''), d.get('card', ''), message.text)
+    # 👈 Додано d['venue_type'] п'ятим аргументом
+    await db.add_event(d['title'], d['desc'], d['photo_id'], d['dt'], d['venue_type'], d['location'], d['total_tickets'], d['is_free'], d['price'], d.get('link', ''), d.get('card', ''), message.text)
     await message.answer("✅ Подію успішно додано!", reply_markup=main_kb(message.from_user.id))
     await state.clear()
     

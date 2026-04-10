@@ -1,0 +1,71 @@
+.hall-container {
+  font-family: sans-serif;
+  text-align: center;
+  padding: 10px;
+  background-color: #f5f5f7; 
+  color: #1d1d1f; 
+}
+
+h2 {
+  margin-bottom: 20px;
+}
+
+.stage {
+  background-color: #e0e0e2; 
+  color: #1d1d1f;
+  border-radius: 8px;
+  padding: 10px;
+  width: 80%;
+  margin: 0 auto 30px auto; 
+  font-weight: bold;
+}
+
+.seats-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 15px; 
+  max-width: 100%;
+  overflow-x: auto; 
+  padding-bottom: 10px;
+}
+
+.row-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px; 
+}
+
+.row-label {
+  font-weight: bold;
+  white-space: nowrap; 
+}
+
+.row-seats {
+  display: flex;
+  gap: 5px; 
+}
+
+.seat {
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  background-color: #d2d2d7; 
+  border: 1px solid #b0b0b5;
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: all 0.2s; 
+}
+
+.seat:hover {
+  background-color: #e0e0e2; 
+}
+
+.seat.selected {
+  background-color: #0071e3; 
+  color: white; 
+  border: 1px solid #005bb7;
+}

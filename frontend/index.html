@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="uk">
+<!DOCTYPE html>
+<html lang="uk">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Бронювання Місць</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+<body>
+    <h2>Обери своє місце</h2>
+    
+    <div class="seat" data-row="1" data-seat="1">1</div>
+    <div class="seat" data-row="1" data-seat="2">2</div>
+
+    <script>
+        let tg = window.Telegram.WebApp;
+        tg.expand(); 
+
+        let selectedSeat = null;
+
+        document.querySelectorAll('.seat').forEach(seat => {
+            seat.addEventListener('click', function() {
+                document.querySelectorAll('.seat').forEach(s => s.classList.remove('selected'));
+                this.classList.add('selected');
+                
+                selectedSeat = {
+                    row: this.getAttribute('data-row'),
+                    seat: this.getAttribute('data-seat')
+                };
+
+                tg.MainButton.text = "ПІДТВЕРДИТИ ВИБІР";
+                tg.MainButton.show();
+            });
+        });
+
+        tg.MainButton.onClick(function() {
+            tg.sendData(JSON.stringify(selectedSeat));
+            tg.close();
+        });
+    </script>
+</body>
+</html>

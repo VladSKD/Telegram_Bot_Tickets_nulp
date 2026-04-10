@@ -23,6 +23,7 @@ class AddEventState(StatesGroup):
     photo = State() 
     description = State()
     date_time = State()
+    venue_type = State()
     location = State() 
     total_tickets = State() 
     is_free = State()

@@ -23,12 +23,12 @@ class Database:
         """
         await self.pool.execute(query, tg_id, username, first_name, last_name, institute, group)
 
-    async def add_event(self, title, desc, photo_id, dt, location, total_tickets, is_free, price, link, card, success_message):
+    async def add_event(self, title, desc, photo_id, dt, venue_type, location, total_tickets, is_free, price, link, card, success_message):
         query = """
-        INSERT INTO events (title, description, photo_id, date_time, location, total_tickets, is_free, price, bank_link, card_number, success_message) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        INSERT INTO events (title, description, photo_id, date_time, venue_type, location, total_tickets, is_free, price, bank_link, card_number, success_message) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         """
-        await self.pool.execute(query, title, desc, photo_id, dt, location, total_tickets, is_free, price, link, card, success_message)
+        await self.pool.execute(query, title, desc, photo_id, dt, venue_type, location, total_tickets, is_free, price, link, card, success_message)
 
     async def get_event(self, event_id):
         query = """
