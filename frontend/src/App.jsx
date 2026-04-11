@@ -5,6 +5,9 @@ const tg = window.Telegram.WebApp;
 
 function App() {
   const [selectedSeats, setSelectedSeats] = useState([]);
+  
+  // ТЕСТОВІ ДАНІ: Імітуємо зайняті місця (червоні)
+  const occupiedSeats = ['6-4', '7-3', '12-1', '12-2', '12-3', '1-6', '2-11', '24-1'];
 
   useEffect(() => {
     tg.expand();
@@ -30,6 +33,9 @@ function App() {
 
   const toggleSeat = (row, seatNum) => {
     const seatId = `${row}-${seatNum}`;
+    
+    if (occupiedSeats.includes(seatId)) return;
+
     setSelectedSeats(prev => {
       if (prev.some(s => s.id === seatId)) {
         return prev.filter(s => s.id !== seatId);
@@ -38,123 +44,92 @@ function App() {
     });
   };
 
-  const renderSeats = (rowCount, rowLabel, startSeatNum, alignRight = false) => {
-    return (
-      <div className={`seats-group ${alignRight ? 'align-right' : 'align-left'}`}>
-        {Array.from({ length: rowCount }).map((_, i) => {
-          const seatNum = startSeatNum + i;
-          const seatId = `${rowLabel}-${seatNum}`;
-          const isSelected = selectedSeats.some(s => s.id === seatId);
+  const hallConfig = [
+    { row: '24', left: 3, right: 3 }, { row: '23', left: 3, right: 3 },
+    { row: '22', left: 3, right: 3 }, { row: '21', left: 3, right: 3 },
+    { row: '20', left: 3, right: 3 }, { row: '19', left: 3, right: 3 },
+    { row: '18', left: 3, right: 3 }, { row: '17', left: 3, right: 3 },
+    { row: '16', left: 3, right: 3 }, { row: '15', left: 3, right: 3 },
+    { row: '14', left: 3, right: 3 },
+    { isAisle: true, label: '' },
+    { row: '13', left: 6, right: 6 },
+    { isAisle: true, label: 'ПРОХІД' },
+    { row: '12Б', left: 6, right: 6 }, { row: '12А', left: 6, right: 6 },
+    { row: '12', left: 6, right: 6 }, { row: '11', left: 6, right: 6 },
+    { row: '10', left: 6, right: 6 }, { row: '9', left: 6, right: 6 },
+    { row: '8', left: 6, right: 6 }, { row: '7', left: 6, right: 6 },
+    { row: '6', left: 6, right: 6 },
+    { isAisle: true, label: 'ПРОХІД' },
+    { row: '5Б', left: 6, right: 6 }, { row: '5А', left: 6, right: 6 },
+    { row: '5', left: 6, right: 6 }, { row: '4', left: 6, right: 6 },
+    { row: '3', left: 6, right: 6 }, { row: '2', left: 6, right: 6 },
+    { row: '1', left: 6, right: 6 }
+  ];
 
-          return (
-            <button
-              key={seatId}
-              className={`seat ${isSelected ? 'selected' : ''}`}
-              onClick={() => toggleSeat(rowLabel, seatNum)}
-            >
-              {seatNum}
-            </button>
-          );
-        })}
-      </div>
-    );
+  const renderSeats = (rowCount, rowLabel, startSeatNum) => {
+    return Array.from({ length: rowCount }).map((_, i) => {
+      const seatNum = startSeatNum + i;
+      const seatId = `${rowLabel}-${seatNum}`;
+      const isOccupied = occupiedSeats.includes(seatId);
+      const isSelected = selectedSeats.some(s => s.id === seatId);
+
+      let className = 'seat available';
+      if (isOccupied) className = 'seat occupied';
+      else if (isSelected) className = 'seat selected';
+
+      return (
+        <button
+          key={seatId}
+          className={className}
+          onClick={() => toggleSeat(rowLabel, seatNum)}
+          disabled={isOccupied}
+        >
+          {/* Змінено: тепер цифра показується завжди */}
+          {seatNum}
+        </button>
+      );
+    });
   };
 
   return (
-    <div className="app-container">
-      <div className="floorplan-wrapper">
-        
-        {/* ЛІВЕ КРИЛО (Кімнати та коридори) */}
-        <div className="left-wing">
-          <div className="room wc-room">
-            <div className="wc-box">WC</div>
-          </div>
-          <div className="room chamber-room">
-            <span className="room-text">Камерний<br/>мистецький<br/>простір</span>
-          </div>
-          <div className="room synergy-room">
-            <span className="room-text">Синергія<br/>живопису<br/>і музики</span>
-          </div>
-          <div className="room gallery-room">
-            <div className="pillar thin-pillar-left"></div>
-            <span className="room-text">Галерея</span>
-            <div className="pillar square-pillar"></div>
-          </div>
-          <div className="room reception-room">
-            <div className="pillar tall-pillar"></div>
-            <span className="room-text">Рецепція</span>
-            <div className="pillar huge-pillar"></div>
-          </div>
-        </div>
+    <div className="hall-wrapper">
+      <h2>Органний зал</h2>
+      
+      <div className="hall-container">
+        {hallConfig.map((item, index) => {
+          if (item.isAisle) {
+            return <div key={`aisle-${index}`} className="aisle-marker">{item.label}</div>;
+          }
 
-        {/* ЦЕНТРАЛЬНИЙ ЗАЛ (Місця) */}
-        <div className="main-hall">
-          
-          {/* ВЕРХНІЙ БЛОК (Ряди 24-14) */}
-          <div className="seating-block top-block">
-            {['24', '23', '22', '21', '20', '19', '18', '17', '16', '15', '14'].map(row => (
-              <div key={row} className="row-wrapper">
-                <span className="row-label">{row}</span>
-                {renderSeats(3, row, 1, true)} {/* alignRight = true */}
-                <div className="center-aisle"></div>
-                {renderSeats(3, row, 4, false)}
-                <span className="row-label">{row}</span>
+          return (
+            <div key={`row-${item.row}`} className="row-wrapper">
+              <span className="row-label">{item.row}</span>
+              
+              <div className="seats-group">
+                {renderSeats(item.left, item.row, 1)}
               </div>
-            ))}
-          </div>
-
-          <div className="row-wrapper row-13">
-             <span className="row-label">13</span>
-             {renderSeats(6, '13', 1)}
-             <div className="center-aisle"></div>
-             {renderSeats(6, '13', 7)}
-             <span className="row-label">13</span>
-          </div>
-
-          <div className="aisle-marker">ПРОХІД</div>
-
-          {/* СЕРЕДНІЙ БЛОК (Ряди 12Б-6) */}
-          <div className="seating-block middle-block">
-            {['12Б', '12А', '12', '11', '10', '9', '8', '7', '6'].map(row => (
-              <div key={row} className="row-wrapper">
-                <span className="row-label">{row}</span>
-                {renderSeats(6, row, 1)}
-                <div className="center-aisle wide-aisle"></div>
-                {renderSeats(6, row, 7)}
-                <span className="row-label">{row}</span>
+              
+              <div className="center-aisle"></div>
+              
+              <div className="seats-group">
+                {renderSeats(item.right, item.row, item.left + 1)}
               </div>
-            ))}
-          </div>
+              
+              <span className="row-label">{item.row}</span>
+            </div>
+          );
+        })}
+      </div>
 
-          <div className="aisle-marker">ПРОХІД</div>
+      <div className="stage-container">
+        <div className="stage">СЦЕНА</div>
+        <p className="stage-subtitle">Тут творять магію музики</p>
+      </div>
 
-          {/* НИЖНІЙ БЛОК (Ряди 5Б-1) */}
-          <div className="seating-block bottom-block">
-            {['5Б', '5А', '5', '4', '3', '2', '1'].map(row => (
-              <div key={row} className="row-wrapper">
-                <span className="row-label">{row}</span>
-                {renderSeats(6, row, 1)}
-                <div className="center-aisle wide-aisle"></div>
-                {renderSeats(6, row, 7)}
-                <span className="row-label">{row}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* СЦЕНА */}
-          <div className="stage-area">
-            <div className="stage-arc"></div>
-            <div className="stage-title">СЦЕНА</div>
-            <div className="stage-subtitle">Тут творять магію музики</div>
-          </div>
-        </div>
-
-        {/* ПРАВЕ КРИЛО (Стовпи) */}
-        <div className="right-wing">
-           <div className="pillar square-pillar-right"></div>
-           <div className="pillar huge-pillar-right"></div>
-        </div>
-
+      <div className="legend">
+        <div className="legend-item"><span className="seat available legend-dot"></span> Вільне</div>
+        <div className="legend-item"><span className="seat occupied legend-dot"></span> Зайняте</div>
+        <div className="legend-item"><span className="seat selected legend-dot"></span> Обране</div>
       </div>
     </div>
   );
