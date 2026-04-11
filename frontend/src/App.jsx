@@ -5,13 +5,18 @@ const tg = window.Telegram.WebApp;
 
 function App() {
   const [selectedSeats, setSelectedSeats] = useState([]);
-  
-  // ТЕСТОВІ ДАНІ: Імітуємо зайняті місця (червоні)
-  const occupiedSeats = ['6-4', '7-3', '12-1', '12-2', '12-3', '1-6', '2-11', '24-1'];
+  const [occupiedSeats, setOccupiedSeats] = useState([]);
 
   useEffect(() => {
     tg.expand();
     tg.ready();
+    
+    const queryParams = new URLSearchParams(window.location.search);
+    const occParam = queryParams.get('occ');
+    
+    if (occParam) {
+      setOccupiedSeats(occParam.split(','));
+    }
   }, []);
 
   useEffect(() => {
@@ -34,6 +39,7 @@ function App() {
   const toggleSeat = (row, seatNum) => {
     const seatId = `${row}-${seatNum}`;
     
+    // Блокуємо клік, якщо місце зайняте
     if (occupiedSeats.includes(seatId)) return;
 
     setSelectedSeats(prev => {

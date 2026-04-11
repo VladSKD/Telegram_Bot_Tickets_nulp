@@ -204,13 +204,18 @@ async def start_buy(callback: CallbackQuery, state: FSMContext):
     event = await db.get_event(event_id)
     
     if event.get('venue_type') == 'organ_hall':
-        web_app_url = "https://telegram-bot-tickets-nulp.vercel.app/"
+        # 1. Дістаємо зайняті місця з БД
+        occ_list = await db.get_occupied_seats(event_id)
+        occ_str = ",".join(occ_list)
+        
+        # 2. Додаємо їх в URL. Заміни домен на свій Vercel!
+        web_app_url = f"https://telegram-bot-tickets-nulp.vercel.app/?occ={occ_str}"
+        
         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🗺 Обрати місця на схемі", web_app=WebAppInfo(url=web_app_url))]])
         await callback.message.answer("Обери бажані місця на інтерактивній схемі залу 👇", reply_markup=kb)
     else:
         await callback.message.answer("🛒 <b>Скільки квитків беремо?</b>\n<i>Напиши просто число (наприклад: 1, 2):</i>", parse_mode="HTML")
         await state.set_state(OrderState.waiting_for_quantity)
-
 
 # --- ФІНАЛІЗАЦІЯ ЗАМОВЛЕННЯ (Спільна функція) ---
 async def process_order_payment(message: Message, state: FSMContext, is_organ=False):
@@ -223,14 +228,20 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
     user = await db.get_user(message.from_user.id)
     username = user['username'] if user['username'] else "Без_юзернейму"
     
+    # Готуємо рядок з місцями для бази даних
+    f_id = None
+    f_type = None
+    if is_organ:
+        seats = data['selected_seats']
+        f_id = ",".join([f"{s['row']}-{s['seat']}" for s in seats])
+        f_type = "organ_seats"
+
     if is_organ or event['is_free']:
-        # БЕЗКОШТОВНА ПОДІЯ АБО ОРГАННИЙ ЗАЛ (де підтвердження миттєве)
-        order_status = "free_seating" if is_organ else "free"
-        order_id = await db.add_order(message.from_user.id, event_id, qty, None, order_status)
+        # Записуємо в БД (тепер з місцями!)
+        order_id = await db.add_order(message.from_user.id, event_id, qty, f_id, f_type)
         await db.update_order_status(order_id, "confirmed")
         
         if is_organ:
-            seats = data['selected_seats']
             buyer_seat = seats[0]
             await sheets.add_order_to_sheet(event['title'], order_id, user['last_name'], user['first_name'], username, user['institute'], user['student_group'], 1, f"Підтверджено (Р{buyer_seat['row']}М{buyer_seat['seat']})")
             
@@ -249,7 +260,7 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
             
         await state.clear()
     else:
-        # ПЛАТНА ПОДІЯ (Очікування квитанції)
+        # ПЛАТНА ПОДІЯ...
         total_price = int(event['price']) * qty
         if event['is_fixed_price']:
             text = f"📝 <b>Твоє замовлення:</b> {qty} шт.\n💳 <b>До оплати:</b> {total_price} грн <i>(по {event['price']} грн/шт)</i>\n\n🔗 <b>Банка:</b> {event['bank_link']}\n🏦 <b>Картка:</b> <code>{event['card_number']}</code>\n\n📸 <b>Наступний крок:</b>\nОплати та надішли сюди скріншот або PDF-квитанцію 👇"
