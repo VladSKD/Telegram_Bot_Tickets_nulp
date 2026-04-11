@@ -79,7 +79,7 @@ h2 {
 .seat {
   width: 26px;
   height: 26px;
-  border-radius: 8px; /* М'які квадратики замість кружечків виглядають сучасніше */
+  border-radius: 8px;
   border: none;
   cursor: pointer;
   font-size: 11px;
@@ -91,36 +91,36 @@ h2 {
   transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
-/* СТАТУС: Вільне */
+/* СТАТУС: Вільне (Спокійний, ніжний зелений) */
 .seat.available {
-  background-color: #e6fffa;
-  border: 1px solid #81e6d9;
-  color: #319795; /* Цифру тепер видно, але вона ніжна */
-  box-shadow: 0 2px 4px rgba(49, 151, 149, 0.1);
+  background-color: #edf7ed; /* Дуже світлий, приємний зелений */
+  border: 1px solid #a5d6a7; /* М'який контур */
+  color: #388e3c; /* Текст читабельний, але не кричущий */
+  box-shadow: 0 1px 3px rgba(56, 142, 60, 0.05);
 }
 
 .seat.available:hover {
-  background-color: #b2f5ea;
-  transform: translateY(-2px); /* Крісло "підстрибує" при наведенні */
-  box-shadow: 0 4px 8px rgba(49, 151, 149, 0.2);
+  background-color: #c8e6c9;
+  transform: translateY(-1px); /* Ледь помітне підняття (замість -2px) */
+  box-shadow: 0 2px 5px rgba(56, 142, 60, 0.1);
 }
 
-/* СТАТУС: Зайняте */
+/* СТАТУС: Зайняте (Пастельний, приглушений червоний) */
 .seat.occupied {
-  background-color: #fff5f5;
-  border: 1px solid #feb2b2;
-  color: #c53030;
+  background-color: #fdecea; /* Світло-рожевий/червоний фон */
+  border: 1px solid #ffcdd2; /* М'який контур */
+  color: #d32f2f;
   cursor: not-allowed;
-  opacity: 0.6;
+  opacity: 0.8;
 }
 
-/* СТАТУС: Обране тобою */
+/* СТАТУС: Обране тобою (Синій залишаємо, анімацію зменшуємо вдвічі) */
 .seat.selected {
   background-color: #3182ce;
   border: 1px solid #2b6cb0;
   color: #ffffff;
-  transform: translateY(-3px) scale(1.05); /* Виділяється найбільше */
-  box-shadow: 0 6px 12px rgba(49, 130, 206, 0.3);
+  transform: translateY(-1px) scale(1.02); /* Зменшено підкидання та збільшення */
+  box-shadow: 0 3px 6px rgba(49, 130, 206, 0.25); /* Тінь теж стала м'якшою */
 }
 
 /* СЦЕНА - Преміум вигляд */
