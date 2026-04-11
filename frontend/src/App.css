@@ -1,71 +1,151 @@
-.hall-container {
-  font-family: sans-serif;
-  text-align: center;
-  padding: 10px;
-  background-color: #f5f5f7; 
-  color: #1d1d1f; 
+/* src/App.css */
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #ffffff;
+  color: #333;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.hall-wrapper {
+  padding: 15px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
 h2 {
-  margin-bottom: 20px;
+  margin-top: 0;
+  font-size: 1.2rem;
 }
 
-.stage {
-  background-color: #e0e0e2; 
-  color: #1d1d1f;
-  border-radius: 8px;
-  padding: 10px;
-  width: 80%;
-  margin: 0 auto 30px auto; 
-  font-weight: bold;
-}
-
-.seats-grid {
+.hall-container {
   display: flex;
   flex-direction: column;
-  gap: 15px; 
-  max-width: 100%;
-  overflow-x: auto; 
-  padding-bottom: 10px;
+  gap: 6px;
+  width: 100%;
+  max-width: 500px;
+  overflow-x: auto; /* Скрол для маленьких екранів */
+  padding: 10px 0;
 }
 
 .row-wrapper {
   display: flex;
+  justify-content: center;
   align-items: center;
-  gap: 10px; 
+  gap: 10px;
 }
 
 .row-label {
-  font-weight: bold;
-  white-space: nowrap; 
-}
-
-.row-seats {
-  display: flex;
-  gap: 5px; 
-}
-
-.seat {
-  width: 30px;
-  height: 30px;
-  border-radius: 6px;
-  background-color: #d2d2d7; 
-  border: 1px solid #b0b0b5;
-  cursor: pointer;
+  width: 25px;
   font-size: 12px;
+  font-weight: bold;
+  text-align: center;
+  color: #555;
+}
+
+.seats-group {
+  display: flex;
+  gap: 4px;
+}
+
+.center-aisle {
+  width: 30px; /* Ширина центрального проходу */
+}
+
+.aisle-marker {
+  text-align: center;
+  font-size: 10px;
+  color: #888;
+  letter-spacing: 2px;
+  margin: 10px 0;
+  border-top: 1px solid #eee;
+  padding-top: 5px;
+}
+
+/* Дизайн Крісел */
+.seat {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%; /* Робимо їх круглими, як на схемі */
+  border: none;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: bold;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  transition: all 0.2s; 
+  transition: transform 0.1s, opacity 0.2s;
+  color: white;
 }
 
-.seat:hover {
-  background-color: #e0e0e2; 
+/* СТАТУСИ КРІСЕЛ */
+.seat.available {
+  background-color: #4CAF50; /* Зелений для вільних */
+  border: 1px solid #388E3C;
+  color: transparent; /* Ховаємо цифру, поки не вибрали, щоб не захаращувати екран */
+}
+
+.seat.available:hover {
+  transform: scale(1.1);
+}
+
+.seat.occupied {
+  background-color: #F44336; /* Червоний для зайнятих */
+  cursor: not-allowed;
+  opacity: 0.8;
 }
 
 .seat.selected {
-  background-color: #0071e3; 
-  color: white; 
-  border: 1px solid #005bb7;
+  background-color: #2196F3; /* Синій для твого вибору */
+  box-shadow: 0 0 5px #2196F3;
+  transform: scale(1.1);
+  color: white;
+}
+
+/* Сцена */
+.stage-container {
+  margin-top: 30px;
+  text-align: center;
+  width: 100%;
+  max-width: 400px;
+}
+
+.stage {
+  border-top: 2px solid #e91e63; /* Рожева лінія сцени як на фото */
+  border-radius: 50% 50% 0 0 / 20px 20px 0 0;
+  padding: 10px;
+  font-weight: bold;
+  font-size: 14px;
+  letter-spacing: 2px;
+}
+
+.stage-subtitle {
+  font-size: 12px;
+  color: #666;
+  margin-top: 5px;
+}
+
+/* Легенда внизу */
+.legend {
+  display: flex;
+  gap: 15px;
+  margin-top: 20px;
+  font-size: 12px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.legend-dot {
+  width: 14px;
+  height: 14px;
+  cursor: default;
+}
+.legend-dot:hover {
+  transform: none;
 }
