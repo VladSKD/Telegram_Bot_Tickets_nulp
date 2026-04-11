@@ -1,12 +1,12 @@
 import asyncio
 import os
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher, F, BaseMiddleware
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from dotenv import load_dotenv
 from database import Database
-from states import AdminBroadcast, AdminEdit, EditProfile, OrderState, AddEventState, Registration
+from states import AdminBroadcast, AdminEdit, EditProfile, OrderState, AddEventState, Registration, AdminBlacklist
 from aiohttp import web
 import sheets
 import json
@@ -29,6 +29,23 @@ bot = Bot(token=os.getenv("BOT_TOKEN"))
 dp = Dispatcher()
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x]
 
+# --- MIDDLEWARE ДЛЯ ЧОРНОГО СПИСКУ ---
+class BlacklistMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        user = event.from_user
+        if user and user.username:
+            if await db.is_blacklisted(user.username):
+                if isinstance(event, Message):
+                    await event.answer("🚫 Ви заблоковані адміністрацією і не можете користуватися ботом.")
+                elif isinstance(event, CallbackQuery):
+                    await event.answer("🚫 Ви заблоковані адміністрацією.", show_alert=True)
+                return
+        return await handler(event, data)
+
+dp.message.middleware(BlacklistMiddleware())
+dp.callback_query.middleware(BlacklistMiddleware())
+# ------------------------------------
+
 def main_kb(user_id):
     buttons = [
         [KeyboardButton(text="Доступні події"), KeyboardButton(text="Мій профіль")]
@@ -42,7 +59,8 @@ def admin_kb():
         [InlineKeyboardButton(text="Додати подію", callback_data="admin_add_event")],
         [InlineKeyboardButton(text="Редагувати подію", callback_data="admin_edit_list")],
         [InlineKeyboardButton(text="Видалити подію", callback_data="admin_del_list")],
-        [InlineKeyboardButton(text="Розсилка", callback_data="admin_broadcast")] 
+        [InlineKeyboardButton(text="Розсилка", callback_data="admin_broadcast")],
+        [InlineKeyboardButton(text="⚫ Чорний список", callback_data="admin_blacklist")] 
     ])
 
 # --- ЛОГІКА ЮЗЕРА ---
@@ -94,10 +112,8 @@ async def process_group(message: Message, state: FSMContext):
 @dp.message(F.text == "Мій профіль")
 async def show_profile(message: Message, state: FSMContext):
     await state.clear() 
-    
     user = await db.get_user(message.from_user.id)
-    if not user:
-        return await message.answer("❌ Профіль не знайдено. Напиши /start для реєстрації.")
+    if not user: return await message.answer("❌ Профіль не знайдено. Напиши /start для реєстрації.")
 
     profile_text = (
         f"👤 <b>ТВІЙ ПРОФІЛЬ</b>\n\n"
@@ -114,7 +130,6 @@ async def show_profile(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="✏️ Змінити Інститут", callback_data="prof_edit_institute")],
         [InlineKeyboardButton(text="✏️ Змінити Групу", callback_data="prof_edit_group")]
     ])
-
     await message.answer(profile_text, reply_markup=kb, parse_mode="HTML")
 
 @dp.callback_query(F.data.startswith("prof_edit_"))
@@ -123,20 +138,15 @@ async def ask_new_profile_value(callback: CallbackQuery, state: FSMContext):
     await state.update_data(edit_field=field_to_edit)
     
     prompts = {
-        "last_name": "нове Прізвище",
-        "first_name": "нове Ім'я",
-        "institute": "свій Інститут (напр. ІКНІ, ІАРХ)",
-        "group": "свою Групу (напр. КН-201)"
+        "last_name": "нове Прізвище", "first_name": "нове Ім'я",
+        "institute": "свій Інститут (напр. ІКНІ, ІАРХ)", "group": "свою Групу (напр. КН-201)"
     }
     
-    text_prompt = prompts.get(field_to_edit, "нове значення")
-    
     await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer(f"✍️ <b>Введи {text_prompt}:</b>", parse_mode="HTML")
+    await callback.message.answer(f"✍️ <b>Введи {prompts.get(field_to_edit, 'нове значення')}:</b>", parse_mode="HTML")
     await state.set_state(EditProfile.enter_value)
     await callback.answer()
 
-# --- Збереження нових даних ---
 @dp.message(EditProfile.enter_value)
 async def save_new_profile_value(message: Message, state: FSMContext):
     if message.text in ["Доступні події", "Мій профіль", "Адмін-панель"]:
@@ -146,21 +156,16 @@ async def save_new_profile_value(message: Message, state: FSMContext):
         else: return await admin_panel(message)
 
     data = await state.get_data()
-    field_name = data['edit_field']
-    new_value = message.text
-    
-    await db.update_user_field(message.from_user.id, field_name, new_value)
+    await db.update_user_field(message.from_user.id, data['edit_field'], message.text)
     
     await message.answer("✅ <b>Дані успішно оновлено!</b>", parse_mode="HTML")
     await state.clear()
-    
     await show_profile(message, state)
 
 @dp.message(F.text == "Доступні події")
 async def list_events(message: Message):
     events = await db.get_active_events()
-    if not events:
-        return await message.answer("📭 <b>Наразі активних подій немає.</b> Слідкуй за анонсами!", parse_mode="HTML")
+    if not events: return await message.answer("📭 <b>Наразі активних подій немає.</b>", parse_mode="HTML")
     
     for ev in events:
         rem = ev['remaining_tickets']
@@ -194,68 +199,84 @@ async def handle_sold_out(callback: CallbackQuery):
 @dp.callback_query(F.data.startswith("buy_"))
 async def start_buy(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_reply_markup(reply_markup=None)
-    
     event_id = int(callback.data.split("_")[1])
     await state.update_data(ev_id=event_id)
-    
     event = await db.get_event(event_id)
     
-    # 👈 Перевіряємо параметр з бази
     if event.get('venue_type') == 'organ_hall':
-        # СЮДИ ВСТАВИШ ПОСИЛАННЯ НА СВІЙ REACT ДОДАТОК (через ngrok для тестів)
         web_app_url = "https://telegram-bot-tickets-nulp.vercel.app/"
-        
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text="🗺 Обрати місця на схемі", 
-                web_app=WebAppInfo(url=web_app_url)
-            )]
-        ])
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🗺 Обрати місця на схемі", web_app=WebAppInfo(url=web_app_url))]])
         await callback.message.answer("Обери бажані місця на інтерактивній схемі залу 👇", reply_markup=kb)
     else:
-        # СТАРА ЛОГІКА ДЛЯ ЗВИЧАЙНИХ ПОДІЙ
         await callback.message.answer("🛒 <b>Скільки квитків беремо?</b>\n<i>Напиши просто число (наприклад: 1, 2):</i>", parse_mode="HTML")
         await state.set_state(OrderState.waiting_for_quantity)
 
 
-# Обробка даних від React додатку (Без QR-кодів)
+# --- ФІНАЛІЗАЦІЯ ЗАМОВЛЕННЯ (Спільна функція) ---
+async def process_order_payment(message: Message, state: FSMContext, is_organ=False):
+    data = await state.get_data()
+    qty = data['qty']
+    event_id = data['ev_id']
+    friends = data.get('friends', [])
+    
+    event = await db.get_event(event_id)
+    user = await db.get_user(message.from_user.id)
+    username = user['username'] if user['username'] else "Без_юзернейму"
+    
+    if is_organ or event['is_free']:
+        # БЕЗКОШТОВНА ПОДІЯ АБО ОРГАННИЙ ЗАЛ (де підтвердження миттєве)
+        order_status = "free_seating" if is_organ else "free"
+        order_id = await db.add_order(message.from_user.id, event_id, qty, None, order_status)
+        await db.update_order_status(order_id, "confirmed")
+        
+        if is_organ:
+            seats = data['selected_seats']
+            buyer_seat = seats[0]
+            await sheets.add_order_to_sheet(event['title'], order_id, user['last_name'], user['first_name'], username, user['institute'], user['student_group'], 1, f"Підтверджено (Р{buyer_seat['row']}М{buyer_seat['seat']})")
+            
+            for i, friend_info in enumerate(friends):
+                f_seat = seats[i+1]
+                await sheets.add_order_to_sheet(event['title'], order_id, "Друг", friend_info, "-", "Гість", f"від @{username}", 1, f"Підтверджено (Р{f_seat['row']}М{f_seat['seat']})")
+            
+            formatted_seats = "\n".join([f"📍 Ряд: <b>{s['row']}</b>, Місце: <b>{s['seat']}</b>" for s in seats])
+            await message.answer(f"✅ <b>Бронювання успішне!</b>\n\n🎟 <b>Твої місця ({qty} шт.):</b>\n{formatted_seats}\n\n📌 {event['success_message']}\n\n<i>Офіційні QR-коди для входу будуть надані організаторами.</i>", parse_mode="HTML")
+        else:
+            await sheets.add_order_to_sheet(event['title'], order_id, user['last_name'], user['first_name'], username, user['institute'], user['student_group'], 1, "Безкоштовно")
+            for friend_info in friends:
+                await sheets.add_order_to_sheet(event['title'], order_id, "Друг", friend_info, "-", "Гість", f"від @{username}", 1, "Безкоштовно")
+                
+            await message.answer(f"✅ <b>Бронювання успішне!</b>\n\n🎟 <b>Кількість:</b> {qty} шт.\n\n📌 {event['success_message']}", parse_mode="HTML")
+            
+        await state.clear()
+    else:
+        # ПЛАТНА ПОДІЯ (Очікування квитанції)
+        total_price = int(event['price']) * qty
+        if event['is_fixed_price']:
+            text = f"📝 <b>Твоє замовлення:</b> {qty} шт.\n💳 <b>До оплати:</b> {total_price} грн <i>(по {event['price']} грн/шт)</i>\n\n🔗 <b>Банка:</b> {event['bank_link']}\n🏦 <b>Картка:</b> <code>{event['card_number']}</code>\n\n📸 <b>Наступний крок:</b>\nОплати та надішли сюди скріншот або PDF-квитанцію 👇"
+        else:
+            text = f"📝 <b>Твоє замовлення:</b> {qty} шт.\n💵 <b>Вартість:</b> {event['price']}\n\n⚠️ <i>Уважно розрахуй загальну суму та здійсни оплату!</i>\n\n🔗 <b>Банка:</b> {event['bank_link']}\n🏦 <b>Картка:</b> <code>{event['card_number']}</code>\n\n📸 <b>Наступний крок:</b>\nНадішли скріншот або PDF-квитанцію 👇"
+        
+        await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
+        await state.set_state(OrderState.waiting_for_proof)
+
+
 @dp.message(F.web_app_data)
 async def handle_web_app_data(message: Message, state: FSMContext):
-    data_from_react = message.web_app_data.data
-    selected_seats = json.loads(data_from_react)
-    
-    data = await state.get_data()
-    event_id = data.get('ev_id')
-    user_id = message.from_user.id
-    
-    user = await db.get_user(user_id)
-    event = await db.get_event(event_id)
-    username = user['username'] if user['username'] else "Без_юзернейму"
+    selected_seats = json.loads(message.web_app_data.data)
     qty = len(selected_seats)
     
-    # Створюємо одне замовлення в базі на загальну кількість квитків
-    order_id = await db.add_order(user_id, event_id, qty, None, "free_seating")
-    await db.update_order_status(order_id, "confirmed")
-    
-    # Формуємо списки місць для таблиці та для повідомлення юзеру
-    seats_str = ", ".join([f"Р{s['row']}М{s['seat']}" for s in selected_seats])
-    formatted_seats = "\n".join([f"📍 Ряд: <b>{s['row']}</b>, Місце: <b>{s['seat']}</b>" for s in selected_seats])
-    
-    # Записуємо в Google Таблицю
-    await sheets.add_order_to_sheet(
-        event['title'], order_id, user['last_name'], user['first_name'], 
-        username, user['institute'], user['student_group'], qty, f"Місця: {seats_str}"
-    )
+    if qty == 1:
+        await state.update_data(qty=qty, selected_seats=selected_seats)
+        await process_order_payment(message, state, is_organ=True)
+    else:
+        await state.update_data(qty=qty, selected_seats=selected_seats, total_friends=qty-1, current_friend=1, friends=[])
+        await message.answer(
+            f"👥 Оскільки ти береш {qty} квитків, нам потрібні дані твоїх друзів.\n\n"
+            f"Введи Прізвище, Ім'я та @тег для <b>1-го друга</b> (наприклад: <i>Шевченко Тарас @taras123</i>):", 
+            parse_mode="HTML"
+        )
+        await state.set_state(OrderState.waiting_for_friend_data)
 
-    # Відправляємо фінальне повідомлення (БЕЗ картинок)
-    await message.answer(
-        f"✅ <b>Бронювання успішне!</b>\n\n"
-        f"🎟 <b>Твої місця ({qty} шт.):</b>\n{formatted_seats}\n\n"
-        f"📌 {event['success_message']}\n\n"
-        f"<i>Офіційні QR-коди для входу будуть надані організаторами.</i>", 
-        parse_mode="HTML"
-    )
-    await state.clear()
 
 @dp.message(OrderState.waiting_for_quantity)
 async def set_qty(message: Message, state: FSMContext):
@@ -274,44 +295,35 @@ async def set_qty(message: Message, state: FSMContext):
     if qty > event['remaining_tickets']:
         return await message.answer(f"❌ Ти не можеш взяти стільки. Залишилось всього <b>{event['remaining_tickets']}</b> квитків.", parse_mode="HTML")
     
-    await state.update_data(qty=qty)
-    user = await db.get_user(message.from_user.id)
-    username = user['username'] if user['username'] else "Без_юзернейму"
-    
-    if event['is_free']:
-        order_id = await db.add_order(message.from_user.id, data['ev_id'], qty, None, "free")
-        await db.update_order_status(order_id, "confirmed")
-        await sheets.add_order_to_sheet(event['title'], order_id, user['last_name'], user['first_name'], username, user['institute'], user['student_group'], qty, "Безкоштовно")
-        
+    if qty == 1:
+        await state.update_data(qty=qty)
+        await process_order_payment(message, state)
+    else:
+        await state.update_data(qty=qty, total_friends=qty-1, current_friend=1, friends=[])
         await message.answer(
-            f"✅ <b>Бронювання успішне!</b>\n\n"
-            f"🎟 <b>Кількість:</b> {qty} шт.\n\n"
-            f"📌 {event['success_message']}",
+            f"👥 Оскільки ти береш {qty} квитків, нам потрібні дані твоїх друзів.\n\n"
+            f"Введи Прізвище, Ім'я та @тег для <b>1-го друга</b> (наприклад: <i>Шевченко Тарас @taras123</i>):", 
             parse_mode="HTML"
         )
-        await state.clear()
+        await state.set_state(OrderState.waiting_for_friend_data)
+
+
+@dp.message(OrderState.waiting_for_friend_data)
+async def process_friend_data(message: Message, state: FSMContext):
+    data = await state.get_data()
+    friends = data.get('friends', [])
+    friends.append(message.text)
+    
+    current = data['current_friend']
+    total = data['total_friends']
+    
+    if current < total:
+        await state.update_data(friends=friends, current_friend=current+1)
+        await message.answer(f"Введи дані для <b>{current+1}-го друга</b>:", parse_mode="HTML")
     else:
-        if event['is_fixed_price']:
-            total_price = int(event['price']) * qty
-            text = (
-                f"📝 <b>Твоє замовлення:</b> {qty} шт.\n"
-                f"💳 <b>До оплати:</b> {total_price} грн <i>(по {event['price']} грн/шт)</i>\n\n"
-                f"🔗 <b>Банка:</b> {event['bank_link']}\n"
-                f"🏦 <b>Картка:</b> <code>{event['card_number']}</code>\n\n"
-                f"📸 <b>Наступний крок:</b>\nОплати та надішли сюди скріншот або PDF-квитанцію 👇"
-            )
-        else:
-            text = (
-                f"📝 <b>Твоє замовлення:</b> {qty} шт.\n"
-                f"💵 <b>Вартість:</b> {event['price']}\n\n"
-                f"⚠️ <i>Уважно розрахуй загальну суму та здійсни оплату!</i>\n\n"
-                f"🔗 <b>Банка:</b> {event['bank_link']}\n"
-                f"🏦 <b>Картка:</b> <code>{event['card_number']}</code>\n\n"
-                f"📸 <b>Наступний крок:</b>\nНадішли скріншот або PDF-квитанцію 👇"
-            )
-                    
-        await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
-        await state.set_state(OrderState.waiting_for_proof)
+        await state.update_data(friends=friends)
+        is_organ = 'selected_seats' in data
+        await process_order_payment(message, state, is_organ)
 
 
 @dp.message(OrderState.waiting_for_proof, F.photo | F.document)
@@ -320,12 +332,20 @@ async def get_proof(message: Message, state: FSMContext):
     f_id = message.photo[-1].file_id if message.photo else message.document.file_id
     f_type = "photo" if message.photo else "document"
     
-    order_id = await db.add_order(message.from_user.id, data['ev_id'], data['qty'], f_id, f_type)
+    qty = data['qty']
+    friends = data.get('friends', [])
+    
+    order_id = await db.add_order(message.from_user.id, data['ev_id'], qty, f_id, f_type)
     user = await db.get_user(message.from_user.id)
     event = await db.get_event(data['ev_id'])
     username = user['username'] if user['username'] else "Без_юзернейму"
     
-    await sheets.add_order_to_sheet(event['title'], order_id, user['last_name'], user['first_name'], username, user['institute'], user['student_group'], data['qty'], "Очікує")
+    # Запис покупця
+    await sheets.add_order_to_sheet(event['title'], order_id, user['last_name'], user['first_name'], username, user['institute'], user['student_group'], 1, "Очікує")
+    
+    # Запис друзів
+    for friend_info in friends:
+        await sheets.add_order_to_sheet(event['title'], order_id, "Друг", friend_info, "-", "Гість", f"від @{username}", 1, "Очікує")
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Підтвердити", callback_data=f"conf_{order_id}")],
@@ -336,7 +356,7 @@ async def get_proof(message: Message, state: FSMContext):
         f"🚨 Нова оплата #{order_id}!\n\n"
         f"👤 Студент: {user['last_name']} {user['first_name']} (@{username})\n"
         f"📚 Група: {user['institute']}, {user['student_group']}\n"
-        f"🎟 Кількість квитків: {data['qty']} шт."
+        f"🎟 Кількість квитків: {qty} шт."
     )
                
     for admin in ADMIN_IDS:
@@ -349,7 +369,6 @@ async def get_proof(message: Message, state: FSMContext):
     await message.answer("⏳ <b>Квитанцію прийнято!</b>\nОчікуй на підтвердження адміністратором. Ми надішлемо тобі повідомлення.", parse_mode="HTML")
     await state.clear()
 
-
 @dp.message(OrderState.waiting_for_proof)
 async def wrong_proof_format(message: Message, state: FSMContext):
     if message.text in ["Доступні події", "Адмін-панель"]:
@@ -357,7 +376,7 @@ async def wrong_proof_format(message: Message, state: FSMContext):
         if message.text == "Доступні події": return await list_events(message)
         else: return await admin_panel(message)
         
-    await message.answer("❌ <b>Неправильний формат!</b>\nБудь ласка, надішли скріншот (фото) або PDF-файл квитанції. Текст чи стікери не приймаються.", parse_mode="HTML")
+    await message.answer("❌ <b>Неправильний формат!</b>\nБудь ласка, надішли скріншот (фото) або PDF-файл квитанції.", parse_mode="HTML")
 
 
 # --- ЛОГІКА АДМІНА ---
@@ -365,6 +384,7 @@ async def wrong_proof_format(message: Message, state: FSMContext):
 async def admin_panel(message: Message):
     await message.answer("Що бажаєте зробити?", reply_markup=admin_kb())
 
+# (ТУТ ЗАЛИШАЄТЬСЯ ВСЯ ВАША СТАРА ЛОГІКА СТВОРЕННЯ/ВИДАЛЕННЯ ПОДІЙ)
 @dp.callback_query(F.data == "admin_add_event")
 async def add_ev_start(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer("Введіть назву події:")
@@ -373,7 +393,6 @@ async def add_ev_start(callback: CallbackQuery, state: FSMContext):
 @dp.message(AddEventState.title)
 async def add_ev_title(message: Message, state: FSMContext):
     await state.update_data(title=message.text)
-    # Тепер бот просить надіслати фото (афішу)
     await message.answer("Прикріпіть афішу до події (надішліть фото):")
     await state.set_state(AddEventState.photo)
 
@@ -397,21 +416,18 @@ async def add_ev_desc(message: Message, state: FSMContext):
 @dp.message(AddEventState.date_time)
 async def add_ev_dt(message: Message, state: FSMContext):
     await state.update_data(dt=message.text)
-    
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎹 Органний зал (з вибором місць)", callback_data="venue_organ_hall")],
         [InlineKeyboardButton(text="🏢 Інше / Немає значення", callback_data="venue_other")]
     ])
-    
-    await message.answer("Обери тип локації (це вплине на те, чи буде доступний інтерактивний вибір місць):", reply_markup=kb)
+    await message.answer("Обери тип локації:", reply_markup=kb)
     await state.set_state(AddEventState.venue_type)
 
 @dp.callback_query(AddEventState.venue_type, F.data.startswith("venue_"))
 async def add_ev_venue_type(callback: CallbackQuery, state: FSMContext):
     venue_type = callback.data.replace("venue_", "") 
     await state.update_data(venue_type=venue_type)
-    
-    await callback.message.edit_text("Тепер введи точне місце проведення текстом (напр. 'Актова зала' або 'Вул. Бандери, 8'):")
+    await callback.message.edit_text("Тепер введи точне місце проведення текстом:")
     await state.set_state(AddEventState.location)
 
 @dp.message(AddEventState.location)
@@ -455,12 +471,8 @@ async def set_ev_type(callback: CallbackQuery, state: FSMContext):
 async def set_price_type(callback: CallbackQuery, state: FSMContext):
     is_fixed = (callback.data == "price_fixed")
     await state.update_data(is_fixed_price=is_fixed)
-    
-    if is_fixed:
-        await callback.message.answer("Введіть ціну за 1 квиток (ТІЛЬКИ ЧИСЛО, напр. 150):")
-    else:
-        await callback.message.answer("Введіть текст ціни (напр. 'від 100 грн' або 'донат від 50 грн'):")
-    
+    if is_fixed: await callback.message.answer("Введіть ціну за 1 квиток (ТІЛЬКИ ЧИСЛО, напр. 150):")
+    else: await callback.message.answer("Введіть текст ціни (напр. 'від 100 грн' або 'донат від 50 грн'):")
     await state.set_state(AddEventState.price)
     await callback.answer()
 
@@ -469,12 +481,9 @@ async def add_ev_price(message: Message, state: FSMContext):
     data = await state.get_data()
     if data.get('is_fixed_price') and not message.text.isdigit():
         return await message.answer("Помилка! Для фіксованої ціни введіть ТІЛЬКИ ЧИСЛО:")
-        
     await state.update_data(price=message.text)
     await message.answer("Введіть посилання на банку Monobank:")
     await state.set_state(AddEventState.bank_link)
-
-
 
 @dp.message(AddEventState.bank_link)
 async def add_ev_link(message: Message, state: FSMContext):
@@ -485,13 +494,12 @@ async def add_ev_link(message: Message, state: FSMContext):
 @dp.message(AddEventState.card_number)
 async def add_ev_card(message: Message, state: FSMContext):
     await state.update_data(card=message.text)
-    await message.answer("Введіть фінальне повідомлення після підтвердження оплати (напр. 'Забирай квиток в 218 кабінеті'):")
+    await message.answer("Введіть фінальне повідомлення після підтвердження оплати:")
     await state.set_state(AddEventState.success_message)
 
 @dp.message(AddEventState.success_message)
 async def add_ev_final(message: Message, state: FSMContext):
     d = await state.get_data()
-    # 👈 Додано d['venue_type'] п'ятим аргументом
     await db.add_event(d['title'], d['desc'], d['photo_id'], d['dt'], d['venue_type'], d['location'], d['total_tickets'], d['is_free'], d['price'], d.get('link', ''), d.get('card', ''), message.text)
     await message.answer("✅ Подію успішно додано!", reply_markup=main_kb(message.from_user.id))
     await state.clear()
@@ -499,8 +507,7 @@ async def add_ev_final(message: Message, state: FSMContext):
 @dp.callback_query(F.data == "admin_del_list")
 async def show_delete_list(callback: CallbackQuery):
     events = await db.get_active_events()
-    if not events:
-        return await callback.message.answer("Немає активних подій для видалення.")
+    if not events: return await callback.message.answer("Немає активних подій для видалення.")
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"{ev['title']}", callback_data=f"del_{ev['id']}")] for ev in events
@@ -513,18 +520,12 @@ async def confirm_delete(callback: CallbackQuery):
     event_id = int(callback.data.split("_")[1])
     await db.delete_event(event_id)
     await callback.message.edit_text("Подію успішно видалено! (Вона більше не показуватиметься студентам).")
-    await callback.answer("Видалено")
 
-# --- РЕДАГУВАННЯ ПОДІЇ ---
 @dp.callback_query(F.data == "admin_edit_list")
 async def show_edit_list(callback: CallbackQuery, state: FSMContext):
     events = await db.get_active_events()
-    if not events:
-        return await callback.message.answer("Немає активних подій для редагування.")
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"{ev['title']}", callback_data=f"edit_{ev['id']}")] for ev in events
-    ])
+    if not events: return await callback.message.answer("Немає активних подій для редагування.")
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"{ev['title']}", callback_data=f"edit_{ev['id']}")] for ev in events])
     await callback.message.answer("Оберіть подію для РЕДАГУВАННЯ:", reply_markup=kb)
     await callback.answer()
 
@@ -532,8 +533,6 @@ async def show_edit_list(callback: CallbackQuery, state: FSMContext):
 async def select_field_to_edit(callback: CallbackQuery, state: FSMContext):
     event_id = int(callback.data.split("_")[1])
     await state.update_data(edit_ev_id=event_id)
-    
-    # Додали кнопку "Фото афіші"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Назву", callback_data="field_title"), InlineKeyboardButton(text="Опис", callback_data="field_description")],
         [InlineKeyboardButton(text="Фото афіші", callback_data="field_photo_id"), InlineKeyboardButton(text="Локацію", callback_data="field_location")],
@@ -547,62 +546,37 @@ async def select_field_to_edit(callback: CallbackQuery, state: FSMContext):
 async def enter_new_value(callback: CallbackQuery, state: FSMContext):
     field_name = callback.data.replace("field_", "")
     data = await state.get_data()
-    event_id = data['edit_ev_id']
-    
-    event = await db.get_event(event_id)
+    event = await db.get_event(data['edit_ev_id'])
     
     if field_name == "price" and event['is_free']:
         return await callback.answer("❌ Це безкоштовна подія! Ціну змінити неможливо.", show_alert=True)
         
     await state.update_data(edit_field=field_name)
-    
-    names_ua = {
-        "title": "нову НАЗВУ", "description": "новий ОПИС", 
-        "photo_id": "нову АФІШУ (надішліть фото)",
-        "date_time": "нову ДАТУ та ЧАС", "location": "нову ЛОКАЦІЮ", 
-        "total_tickets": "нову загальну КІЛЬКІСТЬ КВИТКІВ (число)",
-        "price": "нову ЦІНУ", "success_message": "нове ФІНАЛЬНЕ ПОВІДОМЛЕННЯ"
-    }
-    
+    names_ua = {"title": "нову НАЗВУ", "description": "новий ОПИС", "photo_id": "нову АФІШУ (надішліть фото)", "date_time": "нову ДАТУ та ЧАС", "location": "нову ЛОКАЦІЮ", "total_tickets": "нову загальну КІЛЬКІСТЬ КВИТКІВ (число)", "price": "нову ЦІНУ", "success_message": "нове ФІНАЛЬНЕ ПОВІДОМЛЕННЯ"}
     await callback.message.edit_text(f"Введіть {names_ua.get(field_name, 'нове значення')}:")
     await state.set_state(AdminEdit.enter_value)
 
 @dp.message(AdminEdit.enter_value)
 async def save_new_value(message: Message, state: FSMContext):
     data = await state.get_data()
-    event_id = data['edit_ev_id']
     field_name = data['edit_field']
-    
-    # --- СПЕЦІАЛЬНА ЛОГІКА ДЛЯ ФОТО ---
     if field_name == 'photo_id':
-        if not message.photo:
-            return await message.answer("❌ Будь ласка, надішліть нове фото афіші:")
+        if not message.photo: return await message.answer("❌ Будь ласка, надішліть нове фото афіші:")
         new_value = message.photo[-1].file_id 
     else:
         new_value = message.text
-    # ------------------------------------
-    event = await db.get_event(event_id)
-    
-    if field_name == 'price' and event['is_free']:
-        await state.clear()
-        return await message.answer("❌ Помилка! Ця подія безкоштовна. Зміна ціни скасована.")
-    
-    if field_name == 'total_tickets':
-        if not new_value.isdigit() or int(new_value) <= 0:
-            return await message.answer("❌ Помилка! Введіть додатнє число більше нуля:")
-        new_value = int(new_value)
         
-    if field_name == 'price' and event.get('is_fixed_price'):
-        if not new_value.isdigit() or int(new_value) < 0:
-            return await message.answer("❌ Помилка! Для фіксованої ціни введіть тільки число (0 або більше):")
+    event = await db.get_event(data['edit_ev_id'])
+    if field_name == 'total_tickets' and (not new_value.isdigit() or int(new_value) <= 0):
+        return await message.answer("❌ Помилка! Введіть додатнє число більше нуля:")
+    if field_name == 'price' and event.get('is_fixed_price') and (not new_value.isdigit() or int(new_value) < 0):
+        return await message.answer("❌ Помилка! Для фіксованої ціни введіть тільки число:")
         
-    await db.update_event_field(event_id, field_name, new_value)
-    
+    await db.update_event_field(data['edit_ev_id'], field_name, int(new_value) if field_name == 'total_tickets' else new_value)
     await message.answer("✅ Зміни успішно збережено!")
     await state.clear()
 
-
-# --- ПІДТВЕРДЖЕННЯ ОПЛАТИ ---
+# --- АДМІН: ПІДТВЕРДЖЕННЯ ОПЛАТИ ---
 @dp.callback_query(F.data.startswith("conf_") | F.data.startswith("reje_"))
 async def handle_decision(callback: CallbackQuery):
     action = callback.data.split("_")[0]
@@ -622,72 +596,42 @@ async def handle_decision(callback: CallbackQuery):
         await callback.message.edit_reply_markup(reply_markup=None)
         await callback.message.reply("Замовлення відхилено.")
 
-
 # --- РОЗСИЛКА ---
 @dp.callback_query(F.data == "admin_broadcast")
 async def start_broadcast(callback: CallbackQuery, state: FSMContext):
     events = await db.get_active_events()
-    
     kb_buttons = [[InlineKeyboardButton(text="📢 Усім зареєстрованим у боті", callback_data="bcast_all")]]
-    
-    for ev in events:
-        kb_buttons.append([InlineKeyboardButton(text=f"🎫 Тільки: {ev['title']}", callback_data=f"bcast_ev_{ev['id']}")])
-        
+    for ev in events: kb_buttons.append([InlineKeyboardButton(text=f"🎫 Тільки: {ev['title']}", callback_data=f"bcast_ev_{ev['id']}")])
     kb_buttons.append([InlineKeyboardButton(text="❌ Скасувати", callback_data="bcast_cancel")])
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
-    
-    await callback.message.edit_text("<b>Кому хочеш надіслати повідомлення?</b>", reply_markup=kb, parse_mode="HTML")
+    await callback.message.edit_text("<b>Кому хочеш надіслати повідомлення?</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_buttons), parse_mode="HTML")
     await state.set_state(AdminBroadcast.choose_audience)
-
 
 @dp.callback_query(AdminBroadcast.choose_audience, F.data.startswith("bcast_"))
 async def choose_broadcast_audience(callback: CallbackQuery, state: FSMContext):
     action = callback.data.replace("bcast_", "")
-    
     if action == "cancel":
         await callback.message.edit_text("❌ Розсилку скасовано.")
-        await state.clear()
-        return
-        
+        return await state.clear()
     await state.update_data(broadcast_target=action)
-    
-    target_text = "усім користувачам" if action == "all" else "учасникам обраної події"
-    
-    await callback.message.edit_text(
-        f"📢 <b>Режим розсилки ({target_text})</b>\n\n"
-        "Надішли мені повідомлення (текст, фото, відео або файл).\n"
-        "<i>Щоб скасувати, просто напиши 'Скасувати'.</i>", 
-        parse_mode="HTML"
-    )
+    await callback.message.edit_text("📢 <b>Режим розсилки</b>\nНадішли мені повідомлення.\n<i>Щоб скасувати, напиши 'Скасувати'.</i>", parse_mode="HTML")
     await state.set_state(AdminBroadcast.waiting_for_message)
 
 @dp.message(AdminBroadcast.waiting_for_message)
 async def process_broadcast(message: Message, state: FSMContext):
     if message.text and message.text.lower() == 'скасувати':
         await message.answer("❌ Розсилку скасовано.")
-        await state.clear()
-        return
+        return await state.clear()
 
     data = await state.get_data()
     target = data.get('broadcast_target')
-    
-    if target == "all":
-        users = await db.get_all_users()
-    else:
-        event_id = int(target.replace("ev_", ""))
-        users = await db.get_users_by_event(event_id)
+    users = await db.get_all_users() if target == "all" else await db.get_users_by_event(int(target.replace("ev_", "")))
 
     if not users:
-        await message.answer("🤷‍♂️ Не знайдено користувачів для цієї розсилки (можливо, на цю подію ще немає реєстрацій).")
-        await state.clear()
-        return
+        await message.answer("🤷‍♂️ Не знайдено користувачів для цієї розсилки.")
+        return await state.clear()
 
-    await message.answer(f"🚀 Починаю розсилку для {len(users)} користувачів. Зачекай трішки...")
-    
-    success = 0
-    blocked = 0
-    
+    await message.answer(f"🚀 Починаю розсилку для {len(users)} користувачів...")
+    success, blocked = 0, 0
     for user in users:
         try:
             await message.copy_to(user['tg_id'])
@@ -696,13 +640,49 @@ async def process_broadcast(message: Message, state: FSMContext):
         except Exception:
             blocked += 1
     
-    await message.answer(
-        f"✅ <b>Розсилку завершено!</b>\n\n"
-        f"📨 Успішно отримали: {success}\n"
-        f"🚫 Заблокували бота: {blocked}",
-        parse_mode="HTML"
-    )
+    await message.answer(f"✅ <b>Розсилку завершено!</b>\n\n📨 Успішно: {success}\n🚫 Заблокували: {blocked}", parse_mode="HTML")
     await state.clear()
+
+# --- АДМІН: ЧОРНИЙ СПИСОК ---
+@dp.callback_query(F.data == "admin_blacklist")
+async def admin_bl_menu(callback: CallbackQuery):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Додати юзера", callback_data="bl_add")],
+        [InlineKeyboardButton(text="Видалити юзера", callback_data="bl_remove")],
+        [InlineKeyboardButton(text="Список", callback_data="bl_list")]
+    ])
+    await callback.message.edit_text("⚫ <b>Керування чорним списком</b>", reply_markup=kb, parse_mode="HTML")
+
+@dp.callback_query(F.data == "bl_add")
+async def bl_add(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text("Введіть @юзернейм людини, яку треба забанити:")
+    await state.set_state(AdminBlacklist.add)
+
+@dp.message(AdminBlacklist.add)
+async def process_bl_add(message: Message, state: FSMContext):
+    await db.add_to_blacklist(message.text)
+    await message.answer(f"✅ Користувача {message.text} додано до чорного списку.", reply_markup=admin_kb())
+    await state.clear()
+
+@dp.callback_query(F.data == "bl_remove")
+async def bl_remove(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text("Введіть @юзернейм людини для розблокування:")
+    await state.set_state(AdminBlacklist.remove)
+
+@dp.message(AdminBlacklist.remove)
+async def process_bl_remove(message: Message, state: FSMContext):
+    await db.remove_from_blacklist(message.text)
+    await message.answer(f"✅ Користувача {message.text} розблоковано.", reply_markup=admin_kb())
+    await state.clear()
+
+@dp.callback_query(F.data == "bl_list")
+async def bl_list(callback: CallbackQuery):
+    banned = await db.get_blacklist()
+    if not banned:
+        await callback.message.edit_text("Чорний список пустий.", reply_markup=admin_kb())
+    else:
+        text = "⚫ <b>Заблоковані юзери:</b>\n" + "\n".join([f"- @{u}" for u in banned])
+        await callback.message.edit_text(text, reply_markup=admin_kb(), parse_mode="HTML")
 
 @dp.message()
 async def global_fallback(message: Message, state: FSMContext):

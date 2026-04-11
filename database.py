@@ -10,6 +10,32 @@ class Database:
 
     async def connect(self):
         self.pool = await asyncpg.create_pool(os.getenv("DATABASE_URL"))
+        # Автоматичне створення таблиці для чорного списку
+        await self.pool.execute("""
+            CREATE TABLE IF NOT EXISTS blacklist (
+                username VARCHAR(255) PRIMARY KEY
+            )
+        """)
+
+    # --- ЧОРНИЙ СПИСОК ---
+    async def add_to_blacklist(self, username: str):
+        username = username.replace("@", "").strip()
+        await self.pool.execute("INSERT INTO blacklist (username) VALUES ($1) ON CONFLICT DO NOTHING", username)
+
+    async def remove_from_blacklist(self, username: str):
+        username = username.replace("@", "").strip()
+        await self.pool.execute("DELETE FROM blacklist WHERE username = $1", username)
+
+    async def is_blacklisted(self, username: str):
+        if not username: return False
+        username = username.replace("@", "").strip()
+        val = await self.pool.fetchval("SELECT 1 FROM blacklist WHERE username = $1", username)
+        return bool(val)
+
+    async def get_blacklist(self):
+        rows = await self.pool.fetch("SELECT username FROM blacklist")
+        return [row['username'] for row in rows]
+    # ---------------------
 
     async def register_full_user(self, tg_id, username, first_name, last_name, institute, group):
         query = """
@@ -71,24 +97,15 @@ class Database:
         return await self.pool.fetchrow("SELECT * FROM orders WHERE id = $1", order_id)
     
     async def update_user_field(self, tg_id: int, field_name: str, new_value: str):
-        """
-        Оновлює конкретне поле в профілі користувача (адаптовано під asyncpg).
-        """
         db_columns = {
             "last_name": "last_name",
             "first_name": "first_name",
             "institute": "institute",
             "group": "student_group"
         }
-        
         column = db_columns.get(field_name)
-        
-        if not column:
-            print(f"⚠️ Спроба оновити невідоме поле: {field_name}")
-            return  
-
+        if not column: return  
         query = f"UPDATE users SET {column} = $1 WHERE tg_id = $2"
-
         await self.pool.execute(query, new_value, tg_id)
         
     async def get_all_users(self):

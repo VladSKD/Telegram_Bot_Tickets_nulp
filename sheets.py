@@ -17,24 +17,22 @@ def _get_or_create_worksheet(event_title):
         worksheet = doc.worksheet(event_title)
     except gspread.exceptions.WorksheetNotFound:
         worksheet = doc.add_worksheet(title=event_title, rows="1000", cols="8")
-        # Прибрали "Видано квитки"
         worksheet.append_row(["ID Замовлення", "Прізвище", "Ім'я", "Telegram", "Інститут", "Група", "К-сть квитків", "Статус"])
     return worksheet
 
 def _add_order(event_title, order_id, last_name, first_name, username, institute, group, qty, status):
     ws = _get_or_create_worksheet(event_title)
-    # Прибрали запис "Ні" в кінці
-    ws.append_row([order_id, last_name, first_name, f"@{username}", institute, group, qty, status])
+    ws.append_row([order_id, last_name, first_name, f"@{username}" if username != "-" else "-", institute, group, qty, status])
 
 def _update_cell_in_sheet(event_title, order_id, column_index, new_value):
     ws = _get_or_create_worksheet(event_title)
-    cell = ws.find(str(order_id), in_column=1)
-    if cell:
+    # Знаходимо ВСІ рядки з цим ID (бо тепер там є ще й друзі)
+    cells = ws.findall(str(order_id), in_column=1)
+    for cell in cells:
         ws.update_cell(cell.row, column_index, new_value)
 
 async def add_order_to_sheet(*args):
     await asyncio.to_thread(_add_order, *args)
 
 async def update_payment_in_sheet(event_title, order_id, status):
-    # Оновлюємо 8-му колонку (Статус)
     await asyncio.to_thread(_update_cell_in_sheet, event_title, order_id, 8, status)

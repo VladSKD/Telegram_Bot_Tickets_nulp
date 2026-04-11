@@ -16,6 +16,7 @@ class EditProfile(StatesGroup):
     
 class OrderState(StatesGroup):
     waiting_for_quantity = State()
+    waiting_for_friend_data = State() # Стан для введення друзів
     waiting_for_proof = State()
 
 class AddEventState(StatesGroup):
@@ -40,3 +41,7 @@ class AdminEdit(StatesGroup):
     select_event = State()
     select_field = State()
     enter_value = State()
+
+class AdminBlacklist(StatesGroup):
+    add = State()
+    remove = State()
