@@ -30,7 +30,6 @@ function App() {
 
   const toggleSeat = (row, seatNum) => {
     const seatId = `${row}-${seatNum}`;
-
     setSelectedSeats(prev => {
       if (prev.some(s => s.id === seatId)) {
         return prev.filter(s => s.id !== seatId);
@@ -39,126 +38,123 @@ function App() {
     });
   };
 
-  // Конфігурація залу (зверху вниз, 14-24)
-  const hallConfigTop = [
-    { row: '24', left: 3, right: 3 }, { row: '23', left: 3, right: 3 },
-    { row: '22', left: 3, right: 3 }, { row: '21', left: 3, right: 3 },
-    { row: '20', left: 3, right: 3 }, { row: '19', left: 3, right: 3 },
-    { row: '18', left: 3, right: 3 }, { row: '17', left: 3, right: 3 },
-    { row: '16', left: 3, right: 3 }, { row: '15', left: 3, right: 3 },
-    { row: '14', left: 3, right: 3 }
-  ];
-
-  // Конфігурація проходу та літерних рядів (12Б-6)
-  const hallConfigMiddle = [
-    { row: '13', left: 6, right: 6 },
-    { isAisle: true, label: 'ПРОХІД' },
-    { row: '12Б', left: 6, right: 6 }, { row: '12А', left: 6, right: 6 },
-    { row: '12', left: 6, right: 6 }, { row: '11', left: 6, right: 6 },
-    { row: '10', left: 6, right: 6 }, { row: '9', left: 6, right: 6 },
-    { row: '8', left: 6, right: 6 }, { row: '7', left: 6, right: 6 },
-    { row: '6', left: 6, right: 6 },
-  ];
-
-  // Конфігурація нижніх рядів (1-5Б)
-  const hallConfigBottom = [
-    { isAisle: true, label: 'ПРОХІД' },
-    { row: '5Б', left: 6, right: 6 }, { row: '5А', left: 6, right: 6 },
-    { row: '5', left: 6, right: 6 }, { row: '4', left: 6, right: 6 },
-    { row: '3', left: 6, right: 6 }, { row: '2', left: 6, right: 6 },
-    { row: '1', left: 6, right: 6 }
-  ];
-
-  // Генератор блоку місць (лівого або правого)
-  const renderSeats = (rowCount, rowLabel, startSeatNum) => {
-    return Array.from({ length: rowCount }).map((_, i) => {
-      const seatNum = startSeatNum + i;
-      const seatId = `${rowLabel}-${seatNum}`;
-      const isSelected = selectedSeats.some(s => s.id === seatId);
-
-      let className = 'seat available'; // За замовчуванням всі місця вільні та зелені
-      if (isSelected) className = 'seat selected'; // Сині (обрані)
-
-      return (
-        <button
-          key={seatId}
-          className={className}
-          onClick={() => toggleSeat(rowLabel, seatNum)}
-        >
-          {seatNum}
-        </button>
-      );
-    });
-  };
-
-  const renderRow = (item, index) => {
-    if (item.isAisle) {
-      return <div key={`aisle-${index}`} className="aisle-marker">{item.label}</div>;
-    }
-
+  const renderSeats = (rowCount, rowLabel, startSeatNum, alignRight = false) => {
     return (
-      <div key={`row-${item.row}`} className="row-wrapper">
-        <span className="row-label">{item.row}</span>
-        
-        <div className="seats-group">
-          {renderSeats(item.left, item.row, 1)}
-        </div>
-        
-        <div className="center-aisle"></div>
-        
-        <div className="seats-group">
-          {/* Права сторона починає нумерацію після лівої */}
-          {renderSeats(item.right, item.row, item.left + 1)}
-        </div>
-        
-        <span className="row-label">{item.row}</span>
+      <div className={`seats-group ${alignRight ? 'align-right' : 'align-left'}`}>
+        {Array.from({ length: rowCount }).map((_, i) => {
+          const seatNum = startSeatNum + i;
+          const seatId = `${rowLabel}-${seatNum}`;
+          const isSelected = selectedSeats.some(s => s.id === seatId);
+
+          return (
+            <button
+              key={seatId}
+              className={`seat ${isSelected ? 'selected' : ''}`}
+              onClick={() => toggleSeat(rowLabel, seatNum)}
+            >
+              {seatNum}
+            </button>
+          );
+        })}
       </div>
     );
   };
 
   return (
-    <div className="hall-floorplan">
-      
-      {/* 1. ВЕРХНЯ ЧАСТИНА (Окремі зони) */}
-      <div className="top-area">
-        <div className="floorplan-box toilet-box">Місце туалету</div>
-        <div className="floorplan-box chamber-space-box">Камерний Мистецький Простір</div>
-      </div>
-
-      {/* 2. СЕРЕДНЯ ЧАСТИНА (Зал + Бічні зони) */}
-      <div className="middle-section">
+    <div className="app-container">
+      <div className="floorplan-wrapper">
         
-        {/* ЛІВА ЧАСТИНА */}
-        <div className="left-area">
-          <div className="floorplan-box gallery-box">Галерея</div>
-          <div className="floorplan-box synergy-box">Синерсія</div>
-        </div>
-
-        {/* ЗАЛ З МІСЦЯМИ */}
-        <div className="main-seating-area">
-          <div className="hall-container">
-            {hallConfigTop.map((item, index) => renderRow(item, `top-${index}`))}
-            {hallConfigMiddle.map((item, index) => renderRow(item, `mid-${index}`))}
-            {hallConfigBottom.map((item, index) => renderRow(item, `bot-${index}`))}
+        {/* ЛІВЕ КРИЛО (Кімнати та коридори) */}
+        <div className="left-wing">
+          <div className="room wc-room">
+            <div className="wc-box">WC</div>
+          </div>
+          <div className="room chamber-room">
+            <span className="room-text">Камерний<br/>мистецький<br/>простір</span>
+          </div>
+          <div className="room synergy-room">
+            <span className="room-text">Синергія<br/>живопису<br/>і музики</span>
+          </div>
+          <div className="room gallery-room">
+            <div className="pillar thin-pillar-left"></div>
+            <span className="room-text">Галерея</span>
+            <div className="pillar square-pillar"></div>
+          </div>
+          <div className="room reception-room">
+            <div className="pillar tall-pillar"></div>
+            <span className="room-text">Рецепція</span>
+            <div className="pillar huge-pillar"></div>
           </div>
         </div>
 
-        {/* ПРАВА ЧАСТИНА */}
-        <div className="right-area">
-          <div className="floorplan-box reception-box">Рецепція</div>
+        {/* ЦЕНТРАЛЬНИЙ ЗАЛ (Місця) */}
+        <div className="main-hall">
+          
+          {/* ВЕРХНІЙ БЛОК (Ряди 24-14) */}
+          <div className="seating-block top-block">
+            {['24', '23', '22', '21', '20', '19', '18', '17', '16', '15', '14'].map(row => (
+              <div key={row} className="row-wrapper">
+                <span className="row-label">{row}</span>
+                {renderSeats(3, row, 1, true)} {/* alignRight = true */}
+                <div className="center-aisle"></div>
+                {renderSeats(3, row, 4, false)}
+                <span className="row-label">{row}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="row-wrapper row-13">
+             <span className="row-label">13</span>
+             {renderSeats(6, '13', 1)}
+             <div className="center-aisle"></div>
+             {renderSeats(6, '13', 7)}
+             <span className="row-label">13</span>
+          </div>
+
+          <div className="aisle-marker">ПРОХІД</div>
+
+          {/* СЕРЕДНІЙ БЛОК (Ряди 12Б-6) */}
+          <div className="seating-block middle-block">
+            {['12Б', '12А', '12', '11', '10', '9', '8', '7', '6'].map(row => (
+              <div key={row} className="row-wrapper">
+                <span className="row-label">{row}</span>
+                {renderSeats(6, row, 1)}
+                <div className="center-aisle wide-aisle"></div>
+                {renderSeats(6, row, 7)}
+                <span className="row-label">{row}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="aisle-marker">ПРОХІД</div>
+
+          {/* НИЖНІЙ БЛОК (Ряди 5Б-1) */}
+          <div className="seating-block bottom-block">
+            {['5Б', '5А', '5', '4', '3', '2', '1'].map(row => (
+              <div key={row} className="row-wrapper">
+                <span className="row-label">{row}</span>
+                {renderSeats(6, row, 1)}
+                <div className="center-aisle wide-aisle"></div>
+                {renderSeats(6, row, 7)}
+                <span className="row-label">{row}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* СЦЕНА */}
+          <div className="stage-area">
+            <div className="stage-arc"></div>
+            <div className="stage-title">СЦЕНА</div>
+            <div className="stage-subtitle">Тут творять магію музики</div>
+          </div>
         </div>
-      </div>
 
-      {/* 3. НИЖНЯ ЧАСТИНА (Сцена) */}
-      <div className="stage-container">
-        <div className="stage">СЦЕНА</div>
-        <p className="stage-subtitle">Тут творять магію музики</p>
-      </div>
+        {/* ПРАВЕ КРИЛО (Стовпи) */}
+        <div className="right-wing">
+           <div className="pillar square-pillar-right"></div>
+           <div className="pillar huge-pillar-right"></div>
+        </div>
 
-      {/* Легенда (Оновлена, без "Зайняте") */}
-      <div className="legend">
-        <div className="legend-item"><span className="seat available legend-dot"></span> Вільне</div>
-        <div className="legend-item"><span className="seat selected legend-dot"></span> Обране</div>
       </div>
     </div>
   );

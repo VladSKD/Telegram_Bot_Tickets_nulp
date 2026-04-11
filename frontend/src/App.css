@@ -4,195 +4,229 @@ body {
   padding: 0;
   background-color: #ffffff;
   color: #333;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  user-select: none;
 }
 
-.hall-floorplan {
-  padding: 15px;
+.app-container {
+  display: flex;
+  justify-content: center;
+  padding: 20px 10px;
+  overflow-x: auto;
+}
+
+/* ЗАГАЛЬНЕ КРЕСЛЕННЯ */
+.floorplan-wrapper {
+  display: flex;
+  position: relative;
+  width: 650px; /* Фіксована ширина для збереження пропорцій */
+  min-width: 650px;
+}
+
+/* --- ЛІВЕ КРИЛО (СТІНИ ТА КІМНАТИ) --- */
+.left-wing {
+  width: 140px;
+  border-right: 1px solid #ccc;
+  position: relative;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  width: 100%;
 }
 
-h2 {
-  margin-top: 0;
-  font-size: 1.2rem;
-}
-
-/* 1. СТИЛЬ ДЛЯ ПРЯМОКУТНИКІВ/ЗОВНІШНІХ ЗОН */
-.floorplan-box {
-  border: 2px solid; /* Чіткі межі як на фото */
-  border-radius: 8px;
-  padding: 15px;
-  font-weight: bold;
-  font-size: 12px;
+.room {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
+  border-bottom: 1px solid transparent; 
+}
+
+.room-text {
+  font-size: 10px;
+  color: #555;
   text-align: center;
-  color: #333;
+  line-height: 1.2;
 }
 
-/* Кастомні кольори меж для кожної зони */
-.toilet-box { border-color: #999; width: 100px; } /* Туалет */
-.chamber-space-box { border-color: #666; width: 220px; } /* Камерний Простір */
-.gallery-box { border-color: #888; height: 120px; } /* Галерея */
-.synergy-box { border-color: #777; height: 180px; } /* Синерсія */
-.reception-box { border-color: #aaa; height: 300px; } /* Рецепція */
-
-/* 2. МАКЕТ */
-.top-area {
-  display: flex;
-  justify-content: center;
-  width: 100%;
-  gap: 15px;
-  margin-bottom: 15px;
+.wc-room {
+  height: 60px;
+  border-top: 1px solid #ccc;
+  border-bottom: 1px solid #ccc;
+  justify-content: flex-end;
+  padding-right: 15px;
 }
 
-.middle-section {
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  gap: 20px;
-  width: 100%;
+.wc-box {
+  border: 1px solid #999;
+  border-radius: 6px;
+  padding: 2px 10px;
+  font-size: 10px;
+  color: #555;
 }
 
-.left-area, .right-area {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  width: 80px;
+.chamber-room {
+  height: 110px;
+  border-bottom: 1px solid #ccc;
 }
 
-.main-seating-area {
+.synergy-room {
+  height: 110px;
+  justify-content: flex-start;
+  padding-left: 10px;
+}
+
+.gallery-room {
+  height: 120px;
+  justify-content: flex-start;
+  padding-left: 10px;
+}
+
+.reception-room {
+  height: 150px;
+  justify-content: flex-start;
+  padding-left: 10px;
+  border-bottom: 1px solid #ccc;
+  border-left: 1px solid #ccc;
+  margin-left: 30px;
+}
+
+/* СТОВПИ (СІРІ ФІГУРИ) */
+.pillar {
+  background-color: #e0e0e0;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  position: absolute;
+}
+
+.thin-pillar-left { width: 4px; height: 30px; left: -2px; border-radius: 2px; }
+.square-pillar { width: 25px; height: 30px; right: 10px; }
+.tall-pillar { width: 15px; height: 40px; left: -8px; border-radius: 8px; }
+.huge-pillar { width: 25px; height: 60px; right: 10px; bottom: 10px; border-radius: 10px; }
+
+/* --- ПРАВЕ КРИЛО --- */
+.right-wing {
+  width: 50px;
+  border-left: 1px solid #ccc;
+  position: relative;
+  margin-top: 250px;
+  border-bottom: 1px solid #ccc;
+}
+
+.square-pillar-right { width: 25px; height: 30px; left: 10px; top: 30px; }
+.huge-pillar-right { width: 25px; height: 60px; left: 10px; bottom: 10px; border-radius: 10px; }
+
+/* --- ЦЕНТРАЛЬНИЙ ЗАЛ (МІСЦЯ) --- */
+.main-hall {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
+  padding-top: 10px;
 }
 
-.hall-container {
+.seating-block {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  width: 100%;
-  max-width: 500px;
-  overflow-x: auto; /* Скрол для маленьких екранів */
-  padding: 10px 0;
+  gap: 3px;
 }
 
 .row-wrapper {
   display: flex;
-  justify-content: center;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
+  gap: 5px;
+}
+
+.row-13 {
+  margin-top: 8px;
+  margin-bottom: 8px;
 }
 
 .row-label {
-  width: 25px;
-  font-size: 12px;
-  font-weight: bold;
+  width: 20px;
+  font-size: 11px;
+  color: #666;
   text-align: center;
-  color: #555;
 }
 
 .seats-group {
   display: flex;
-  gap: 4px;
+  gap: 3px;
+  width: 110px; /* Фіксуємо ширину, щоб верхні ряди були по центру */
 }
 
-.center-aisle {
-  width: 30px; /* Ширина центрального проходу */
-}
+/* Щоб верхні 3 місця притискалися до проходу */
+.align-right { justify-content: flex-end; }
+.align-left { justify-content: flex-start; }
+
+.center-aisle { width: 25px; }
+.wide-aisle { width: 35px; }
 
 .aisle-marker {
-  text-align: center;
-  font-size: 10px;
-  color: #888;
-  letter-spacing: 2px;
-  margin: 10px 0;
+  font-size: 9px;
+  color: #777;
+  letter-spacing: 1px;
+  margin: 5px 0;
   border-top: 1px solid #eee;
-  padding-top: 5px;
+  width: 80%;
+  text-align: center;
+  padding-top: 2px;
 }
 
-/* Дизайн Крісел */
+/* ДИЗАЙН КРІСЕЛ (1 В 1 ЯК НА ФОТО) */
 .seat {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%; /* Робимо їх круглими */
-  border: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background-color: #e6e6e6; /* Світло-сірий */
+  border: 1px solid #c0c0c0; /* Тонка сіра рамка */
   cursor: pointer;
-  font-size: 10px;
+  font-size: 8px;
   font-weight: bold;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  transition: transform 0.1s, opacity 0.2s;
-  color: white; /* Завжди показуємо цифру */
+  color: transparent; /* Цифру не видно, поки не вибереш */
+  transition: all 0.1s ease;
 }
 
-/* СТАТУСИ КРІСЕЛ */
-.seat.available {
-  background-color: #4CAF50; /* Зелений для вільних */
-  border: 1px solid #388E3C;
-  color: transparent; /* Цифру видно лише при виборі */
-}
-
-.seat.available:hover {
-  transform: scale(1.1);
-  color: white; /* Цифру видно при наведенні */
+.seat:hover {
+  background-color: #d0d0d0;
 }
 
 .seat.selected {
-  background-color: #2196F3; /* Синій для твого вибору */
-  box-shadow: 0 0 5px #2196F3;
-  transform: scale(1.1);
-  color: white; /* Завжди показуємо цифру, коли місце вибране */
+  background-color: #2196F3; /* Яскраво-синій */
+  border-color: #1976D2;
+  color: white; /* З'являється цифра */
+  transform: scale(1.15);
+  box-shadow: 0 0 4px rgba(33, 150, 243, 0.5);
 }
 
-/* Сцена */
-.stage-container {
-  margin-top: 30px;
-  text-align: center;
+/* --- СЦЕНА --- */
+.stage-area {
+  margin-top: 25px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   width: 100%;
-  max-width: 400px;
 }
 
-.stage {
-  border-top: 2px solid #e91e63; /* Рожева лінія сцени як на фото */
-  border-radius: 50% 50% 0 0 / 20px 20px 0 0;
-  padding: 10px;
-  font-weight: bold;
+.stage-arc {
+  width: 280px;
+  height: 15px;
+  border-top: 1.5px solid #e91e63; /* Тонка рожева лінія */
+  border-radius: 50% / 100% 100% 0 0; /* Робить ідеальну пологу дугу */
+  margin-bottom: 5px;
+}
+
+.stage-title {
   font-size: 14px;
-  letter-spacing: 2px;
+  color: #333;
+  letter-spacing: 1px;
 }
 
 .stage-subtitle {
-  font-size: 12px;
-  color: #666;
-  margin-top: 5px;
-}
-
-/* Легенда внизу */
-.legend {
-  display: flex;
-  gap: 15px;
-  margin-top: 20px;
-  font-size: 12px;
-}
-
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.legend-dot {
-  width: 14px;
-  height: 14px;
-  cursor: default;
-}
-.legend-dot:hover {
-  transform: none;
+  font-size: 10px;
+  color: #555;
+  margin-top: 2px;
 }
