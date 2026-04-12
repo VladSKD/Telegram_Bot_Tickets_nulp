@@ -66,12 +66,15 @@ function App() {
     if (isAdmin) {
       // АДМІН: Може виділяти ТІЛЬКИ зайняті (червоні) місця і тільки по 1 штуці
       if (!isOccupied) return;
+      
       setSelectedSeats(prev => {
+        // Якщо клікнули по вже виділеному — знімаємо виділення, інакше виділяємо нове
         return prev.some(s => s.id === seatId) ? [] : [{ id: seatId, row, seat: seatNum }];
       });
     } else {
       // ПОКУПЕЦЬ: Блокуємо клік, якщо місце зайняте
       if (isOccupied) return;
+      
       setSelectedSeats(prev => {
         if (prev.some(s => s.id === seatId)) {
           return prev.filter(s => s.id !== seatId);
@@ -80,6 +83,8 @@ function App() {
       });
     }
   };
+
+  
 
   const hallConfig = [
     { row: '24', left: 3, right: 3 }, { row: '23', left: 3, right: 3 },
@@ -112,16 +117,18 @@ function App() {
 
       let className = 'seat available';
       if (isOccupied) className = 'seat occupied';
-      else if (isSelected) className = 'seat selected';
+      
+      // 👈 Важливо: додаємо клас selected, навіть якщо місце зайняте (для адміна)
+      if (isSelected) className += ' selected';
 
       return (
         <button
           key={seatId}
           className={className}
           onClick={() => toggleSeat(rowLabel, seatNum)}
-          disabled={isOccupied}
+          // 👈 ОСЬ ТУТ БУВ БАГ: тепер кнопка активна для адміна, навіть якщо вона червона
+          disabled={!isAdmin && isOccupied}
         >
-          {/* Змінено: тепер цифра показується завжди */}
           {seatNum}
         </button>
       );

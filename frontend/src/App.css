@@ -199,3 +199,9 @@ h2 {
   transform: scale(1.15);
   box-shadow: 0 4px 10px rgba(197, 48, 48, 0.4);
 }
+
+/* Додай це в кінець App.css */
+.admin-mode .seat.occupied.selected {
+  border: 3px solid #2196F3 !important; /* Яскраво-синя обводка для вибраного адміном місця */
+  transform: scale(1.1);
+}
