@@ -49,3 +49,4 @@ class AdminBlacklist(StatesGroup):
 class AdminTickets(StatesGroup):
     select_event = State()
     uploading = State()
+    mass_uploading = State()

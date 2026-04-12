@@ -1,6 +1,7 @@
 import asyncio
 import os
 import time
+import re
 from aiogram import Bot, Dispatcher, F, BaseMiddleware
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -64,7 +65,8 @@ def admin_kb():
         [InlineKeyboardButton(text="Видалити подію", callback_data="admin_del_list")],
         [InlineKeyboardButton(text="Розсилка", callback_data="admin_broadcast")],
         [InlineKeyboardButton(text="⚫ Чорний список", callback_data="admin_blacklist")],
-        [InlineKeyboardButton(text="📎 Завантажити квитки (ПДФ/Фото)", callback_data="admin_upload_tickets")],
+        [InlineKeyboardButton(text="📎 Завантажити квитки (1шт + підпис)", callback_data="admin_upload_tickets")],
+        [InlineKeyboardButton(text="📂 МАСОВЕ завантаження ПДФ", callback_data="admin_mass_upload")],
         [InlineKeyboardButton(text="🗺 Керування залом (Адмін)", callback_data="admin_manage_hall")]
     ])
 
@@ -715,6 +717,72 @@ async def finish_ticket_upload(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text("✅ Завантаження квитків завершено! Вони автоматично надсилатимуться покупцям.")
     await state.clear()
 
+
+# --- МАСОВЕ ЗАВАНТАЖЕННЯ КВИТКІВ ---
+@dp.callback_query(F.data == "admin_mass_upload")
+async def admin_mass_upload_start(callback: CallbackQuery, state: FSMContext):
+    events = await db.get_active_events()
+    organ_events = [ev for ev in events if ev.get('venue_type') == 'organ_hall']
+    
+    if not organ_events:
+        return await callback.message.answer("Немає активних подій в Органному залі.")
+        
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"{ev['title']}", callback_data=f"mass_tkt_{ev['id']}")] for ev in organ_events
+    ])
+    await callback.message.edit_text("Обери подію для МАСОВОГО завантаження квитків:", reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("mass_tkt_"))
+async def admin_ready_to_mass_upload(callback: CallbackQuery, state: FSMContext):
+    event_id = int(callback.data.split("_")[2])
+    await state.update_data(upload_event_id=event_id, uploaded_count=0)
+    
+    await callback.message.edit_text(
+        "📂 <b>МАСОВЕ ЗАВАНТАЖЕННЯ УВІМКНЕНО!</b>\n\n"
+        "Просто виділи всі PDF-файли квитків (можна до 100 шт. за раз) і відправ їх мені.\n\n"
+        "⚠️ <b>ВАЖЛИВО:</b> Назви файлів повинні містити ряд і місце після слова 'Партер', наприклад:\n"
+        "<code>10895874_Партер_24_1_2025-10-04_1.pdf</code>\n\n"
+        "<i>Я сам прочитаю назву і розкладу їх по місцях. Ніяких підписів додавати не треба!</i>\n\n"
+        "Коли завантажиш усі файли, натисни кнопку нижче.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Завершити масове завантаження", callback_data="finish_mass_upload")]]),
+        parse_mode="HTML"
+    )
+    await state.set_state(AdminTickets.mass_uploading)
+
+@dp.message(AdminTickets.mass_uploading, F.document)
+async def process_mass_ticket_file(message: Message, state: FSMContext):
+    file_name = message.document.file_name
+    
+    # Універсальний парсер: шукає структуру ЯКИЙСЬНОМЕР_СЕКТОР_РЯД_МІСЦЕ_...
+    # Ми беремо будь-який текст до другого підкреслення, потім витягуємо РЯД і МІСЦЕ
+    match = re.search(r'^[^_]+_[^_]+_([0-9А-Яа-я]+)_(\d+)_', file_name, re.IGNORECASE)
+    
+    if not match:
+        return await message.answer(f"❌ Файл <b>{file_name}</b> проігноровано: назва не відповідає формату 'Номер_Сектор_РЯД_МІСЦЕ_Дата'.", parse_mode="HTML")
+        
+    row = match.group(1)
+    seat = match.group(2)
+    
+    data = await state.get_data()
+    event_id = data['upload_event_id']
+    f_id = message.document.file_id
+    
+    await db.add_seat_ticket(event_id, row, seat, f_id, "document")
+    
+    # Оновлюємо лічильник
+    new_count = data.get('uploaded_count', 0) + 1
+    await state.update_data(uploaded_count=new_count)
+    
+    # Звітуємо
+    if new_count <= 3 or new_count % 10 == 0:
+        await message.answer(f"✅ Збережено: Ряд {row}, Місце {seat} <i>({file_name})</i>. Всього: {new_count}", parse_mode="HTML")
+
+@dp.callback_query(AdminTickets.mass_uploading, F.data == "finish_mass_upload")
+async def finish_mass_upload(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    count = data.get('uploaded_count', 0)
+    await callback.message.edit_text(f"✅ <b>Масове завантаження завершено!</b>\nУспішно збережено квитків: <b>{count}</b> шт.", parse_mode="HTML")
+    await state.clear()
 
 # --- АДМІН: ПІДТВЕРДЖЕННЯ ОПЛАТИ ---
 @dp.callback_query(F.data.startswith("conf_") | F.data.startswith("reje_"))
