@@ -856,6 +856,8 @@ async def open_admin_hall(callback: CallbackQuery):
     )
     await callback.message.answer("Карта для адміністрування готова 👇", reply_markup=kb)
 
+# У main.py знайди perform_adm_cancel і онови її:
+
 @dp.callback_query(F.data.startswith("adm_cancel_"))
 async def perform_adm_cancel(callback: CallbackQuery):
     parts = callback.data.split("_")
@@ -866,22 +868,27 @@ async def perform_adm_cancel(callback: CallbackQuery):
     
     event = await db.get_event(order['event_id'])
     
-    # Видаляємо квиток з бази
+    # 1. Видаляємо з бази даних
     success = await db.remove_seat_from_order(order_id, row, seat)
+    
     if success:
-        await callback.message.edit_text(callback.message.text + f"\n\n❌ <b>Квиток (Ряд {row}, Місце {seat}) успішно скасовано!</b>", parse_mode="HTML")
+        # 2. ОНОВЛЮЄМО GOOGLE ТАБЛИЦЮ 👈
+        await sheets.cancel_seat_in_sheet(event['title'], order_id, row, seat)
         
-        # Надсилаємо сповіщення юзеру!
+        await callback.message.edit_text(callback.message.text + f"\n\n❌ <b>Квиток (Ряд {row}, Місце {seat}) скасовано в БД та Таблиці!</b>", parse_mode="HTML")
+        
+        # 3. Сповіщення юзеру
         try:
             await bot.send_message(
                 order['user_id'], 
-                f"⚠️ <b>Увага!</b>\nАдміністрація скасувала твій квиток на подію <b>{event['title']}</b> (Ряд {row}, Місце {seat}).\nЯкщо маєш питання — звернись до організаторів.",
+                f"⚠️ <b>Твій квиток скасовано</b>\nАдміністрація скасувала твоє місце (Ряд {row}, Місце {seat}) на подію <b>{event['title']}</b>.\nГроші будуть повернуті (якщо це була платна подія).",
                 parse_mode="HTML"
             )
         except:
-            pass # Юзер міг заблокувати бота
+            pass
     else:
-        await callback.answer("Помилка: місце вже скасовано або не знайдено.", show_alert=True)
+        await callback.answer("Помилка при видаленні", show_alert=True)
+        
 
 async def main():
     await db.connect()

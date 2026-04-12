@@ -36,3 +36,21 @@ async def add_order_to_sheet(*args):
 
 async def update_payment_in_sheet(event_title, order_id, status):
     await asyncio.to_thread(_update_cell_in_sheet, event_title, order_id, 8, status)
+    
+def _mark_seat_as_cancelled(event_title, order_id, row_num, seat_num):
+    ws = _get_or_create_worksheet(event_title)
+    # Знаходимо всі рядки з цим ID замовлення
+    cells = ws.findall(str(order_id), in_column=1)
+    
+    # Шукаємо саме той рядок, де в статусі вказано наше місце
+    seat_marker = f"Р{row_num}М{seat_num}"
+    
+    for cell in cells:
+        status_val = ws.cell(cell.row, 8).value # 8 колонка — це Статус
+        if seat_marker in status_val:
+            ws.update_cell(cell.row, 8, "🔴 СКАСОВАНО")
+            return True
+    return False
+
+async def cancel_seat_in_sheet(*args):
+    await asyncio.to_thread(_mark_seat_as_cancelled, *args)
