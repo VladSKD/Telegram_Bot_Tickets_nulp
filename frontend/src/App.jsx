@@ -1,11 +1,26 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import './App.css';
+
 
 const tg = window.Telegram.WebApp;
 
 function App() {
   const [selectedSeats, setSelectedSeats] = useState([]);
   const [occupiedSeats, setOccupiedSeats] = useState([]);
+  
+  // 👈 Створюємо "посилання" на стан, щоб Telegram завжди бачив актуальні дані
+  const selectedSeatsRef = useRef(selectedSeats);
+
+  useEffect(() => {
+    selectedSeatsRef.current = selectedSeats; // Оновлюємо посилання при кожній зміні
+    
+    if (selectedSeats.length > 0) {
+      tg.MainButton.text = `ПІДТВЕРДИТИ (${selectedSeats.length} шт.)`;
+      tg.MainButton.show();
+    } else {
+      tg.MainButton.hide();
+    }
+  }, [selectedSeats]);
 
   useEffect(() => {
     tg.expand();
@@ -13,28 +28,21 @@ function App() {
     
     const queryParams = new URLSearchParams(window.location.search);
     const occParam = queryParams.get('occ');
-    
-    if (occParam) {
-      setOccupiedSeats(occParam.split(','));
-    }
-  }, []);
+    if (occParam) setOccupiedSeats(occParam.split(','));
 
-  useEffect(() => {
-    if (selectedSeats.length > 0) {
-      tg.MainButton.text = `ПІДТВЕРДИТИ (${selectedSeats.length} шт.)`;
-      tg.MainButton.show();
-    } else {
-      tg.MainButton.hide();
-    }
-
+    // 👈 Налаштовуємо обробник кнопки ОДИН раз при запуску
     const handleMainButtonClick = () => {
-      tg.sendData(JSON.stringify(selectedSeats));
-      tg.close();
+      const dataToSend = selectedSeatsRef.current;
+      if (dataToSend.length > 0) {
+        tg.sendData(JSON.stringify(dataToSend));
+      } else {
+        tg.showAlert("Будь ласка, оберіть місця!");
+      }
     };
 
     tg.MainButton.onClick(handleMainButtonClick);
     return () => tg.MainButton.offClick(handleMainButtonClick);
-  }, [selectedSeats]);
+  }, []); // Пустий масив залежностей - виконується 1 раз
 
   const toggleSeat = (row, seatNum) => {
     const seatId = `${row}-${seatNum}`;
