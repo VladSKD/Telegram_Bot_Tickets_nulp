@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import './App.css';
 
 const tg = window.Telegram.WebApp;
@@ -6,8 +6,27 @@ const tg = window.Telegram.WebApp;
 function App() {
   const [selectedSeats, setSelectedSeats] = useState([]);
   const [occupiedSeats, setOccupiedSeats] = useState([]);
+  
+  // Додаємо стани для адмін-режиму
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [eventId, setEventId] = useState(null);
 
-  // Отримуємо зайняті місця при першому запуску
+  const selectedSeatsRef = useRef(selectedSeats);
+
+  useEffect(() => {
+    selectedSeatsRef.current = selectedSeats;
+    
+    if (selectedSeats.length > 0) {
+      // Кнопка змінює текст залежно від режиму
+      tg.MainButton.text = isAdmin 
+        ? `ДІЗНАТИСЯ ІНФО (Ряд ${selectedSeats[0].row}, Місце ${selectedSeats[0].seat})` 
+        : `🎟 КУПИТИ (${selectedSeats.length} шт.)`;
+      tg.MainButton.show();
+    } else {
+      tg.MainButton.hide();
+    }
+  }, [selectedSeats, isAdmin]);
+
   useEffect(() => {
     tg.expand();
     tg.ready();
@@ -15,23 +34,22 @@ function App() {
     const queryParams = new URLSearchParams(window.location.search);
     const occParam = queryParams.get('occ');
     if (occParam) setOccupiedSeats(occParam.split(','));
-  }, []);
-
-  // ОДИН ГАРАНТОВАНИЙ EFFECT ДЛЯ КНОПКИ
-  // Він перезапускається щоразу, коли ти тицяєш на місце
-  useEffect(() => {
-    if (selectedSeats.length > 0) {
-      tg.MainButton.text = `🎟 КУПИТИ (${selectedSeats.length} шт.)`; 
-      tg.MainButton.show();
-    } else {
-      tg.MainButton.hide();
-    }
+    
+    // Перевіряємо, чи це зайшов адмін
+    if (queryParams.get('admin') === 'true') setIsAdmin(true);
+    if (queryParams.get('ev_id')) setEventId(queryParams.get('ev_id'));
 
     const handleMainButtonClick = () => {
-      if (selectedSeats.length > 0) {
-        // 👈 Спрощуємо дані: замість JSON шлемо рядок "Ряд-Місце|Ряд-Місце"
-        const dataString = selectedSeats.map(s => `${s.row}-${s.seat}`).join('|');
-        tg.sendData(dataString);
+      const dataToSend = selectedSeatsRef.current;
+      if (dataToSend.length > 0) {
+        if (isAdmin) {
+          // Відправляємо спеціальний код для адміна: admin_seat|ev_id|row-seat
+          tg.sendData(`admin_seat|${eventId}|${dataToSend[0].row}-${dataToSend[0].seat}`);
+        } else {
+          // Звичайний формат для покупця
+          const dataString = dataToSend.map(s => `${s.row}-${s.seat}`).join('|');
+          tg.sendData(dataString);
+        }
       } else {
         tg.showAlert("Будь ласка, оберіть місця!");
       }
@@ -39,20 +57,28 @@ function App() {
 
     tg.MainButton.onClick(handleMainButtonClick);
     return () => tg.MainButton.offClick(handleMainButtonClick);
-  }, [selectedSeats]); // Залежність від масиву вибраних місць
+  }, [isAdmin, eventId]);
 
   const toggleSeat = (row, seatNum) => {
     const seatId = `${row}-${seatNum}`;
-    
-    // Блокуємо клік, якщо місце зайняте
-    if (occupiedSeats.includes(seatId)) return;
+    const isOccupied = occupiedSeats.includes(seatId);
 
-    setSelectedSeats(prev => {
-      if (prev.some(s => s.id === seatId)) {
-        return prev.filter(s => s.id !== seatId);
-      }
-      return [...prev, { id: seatId, row, seat: seatNum }];
-    });
+    if (isAdmin) {
+      // АДМІН: Може виділяти ТІЛЬКИ зайняті (червоні) місця і тільки по 1 штуці
+      if (!isOccupied) return;
+      setSelectedSeats(prev => {
+        return prev.some(s => s.id === seatId) ? [] : [{ id: seatId, row, seat: seatNum }];
+      });
+    } else {
+      // ПОКУПЕЦЬ: Блокуємо клік, якщо місце зайняте
+      if (isOccupied) return;
+      setSelectedSeats(prev => {
+        if (prev.some(s => s.id === seatId)) {
+          return prev.filter(s => s.id !== seatId);
+        }
+        return [...prev, { id: seatId, row, seat: seatNum }];
+      });
+    }
   };
 
   const hallConfig = [
@@ -103,8 +129,8 @@ function App() {
   };
 
   return (
-    <div className="hall-wrapper">
-      <h2>Органний зал</h2>
+    <div className={`hall-wrapper ${isAdmin ? 'admin-mode' : ''}`}>
+      <h2>Органний зал {isAdmin ? '(АДМІН)' : ''}</h2>
       
       <div className="hall-container">
         {hallConfig.map((item, index) => {

@@ -181,3 +181,21 @@ h2 {
 .legend-dot:hover {
   transform: none; /* Відключаємо анімацію для легенди */
 }
+
+.admin-mode .seat.available {
+  opacity: 0.3; /* Вільні місця ледь видно */
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.admin-mode .seat.occupied {
+  cursor: pointer; /* Зайняті можна клікати */
+  opacity: 1;
+  border: 2px solid #c53030;
+}
+
+.admin-mode .seat.occupied:hover {
+  transform: scale(1.15);
+  box-shadow: 0 4px 10px rgba(197, 48, 48, 0.4);
+}

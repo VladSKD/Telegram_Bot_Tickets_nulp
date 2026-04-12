@@ -132,6 +132,43 @@ class Database:
                 seats.extend(row['file_id'].split(','))
         return seats
     
+    async def get_seat_info(self, event_id, row, seat):
+        query = """
+        SELECT o.id as order_id, o.user_id, u.first_name, u.last_name, u.username, u.institute, u.student_group, o.file_id
+        FROM orders o
+        JOIN users u ON o.user_id = u.tg_id
+        WHERE o.event_id = $1 AND o.file_type = 'organ_seats' AND o.status = 'confirmed'
+        """
+        rows = await self.pool.fetch(query, event_id)
+        target_seat = f"{row}-{seat}"
+        for r in rows:
+            if r['file_id'] and target_seat in r['file_id'].split(','):
+                return r
+        return None
+
+    # --- ВИДАЛЕННЯ КВИТКА ДЛЯ АДМІНА ---
+    async def remove_seat_from_order(self, order_id, row, seat):
+        order = await self.get_order(order_id)
+        if not order or not order['file_id']: return False
+        
+        seats = order['file_id'].split(',')
+        target_seat = f"{row}-{seat}"
+        
+        if target_seat in seats:
+            seats.remove(target_seat)
+            new_file_id = ",".join(seats) if seats else None
+            new_count = order['ticket_count'] - 1
+
+            if new_count == 0:
+                # Якщо це був останній/єдиний квиток, скасовуємо все замовлення
+                await self.pool.execute("UPDATE orders SET status = 'cancelled', file_id = NULL, ticket_count = 0 WHERE id = $1", order_id)
+            else:
+                # Якщо там ще є квитки друзів, оновлюємо рядок
+                await self.pool.execute("UPDATE orders SET file_id = $1, ticket_count = $2 WHERE id = $3", new_file_id, new_count, order_id)
+            return True
+        return False
+    
+    
     async def update_user_field(self, tg_id: int, field_name: str, new_value: str):
         db_columns = {
             "last_name": "last_name",

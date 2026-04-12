@@ -65,6 +65,7 @@ def admin_kb():
         [InlineKeyboardButton(text="Розсилка", callback_data="admin_broadcast")],
         [InlineKeyboardButton(text="⚫ Чорний список", callback_data="admin_blacklist")],
         [InlineKeyboardButton(text="📎 Завантажити квитки (ПДФ/Фото)", callback_data="admin_upload_tickets")]
+        [InlineKeyboardButton(text="🗺 Керування залом (Адмін)", callback_data="admin_manage_hall")]
     ])
 
 # --- ЛОГІКА ЮЗЕРА ---
@@ -291,12 +292,41 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
 
 @dp.message(F.web_app_data)
 async def handle_web_app_data(message: Message, state: FSMContext):
-    # Повертаємо звичайне меню
     await message.answer("🔄 Обробляю твій вибір...", reply_markup=main_kb(message.from_user.id))
-    
     raw_data = message.web_app_data.data
+    
+    # 🌟 ЯКЩО ЦЕ АДМІН ВІДПРАВИВ ЗАПИТ НА ІНФУ ПРО МІСЦЕ:
+    if raw_data.startswith("admin_seat|"):
+        _, ev_id_str, seat_str = raw_data.split("|")
+        row, seat = seat_str.split('-')
+        
+        info = await db.get_seat_info(int(ev_id_str), row, seat)
+        if not info:
+            return await message.answer(f"ℹ️ Місце {row}-{seat} не знайдено або вже вільне.")
+            
+        event = await db.get_event(int(ev_id_str))
+        username = f"@{info['username']}" if info['username'] else "Без юзернейму"
+        
+        text = (
+            f"🛠 <b>Деталі квитка</b>\n\n"
+            f"🎫 <b>Подія:</b> {event['title']}\n"
+            f"📍 <b>Місце:</b> Ряд {row}, Місце {seat}\n\n"
+            f"👤 <b>Покупець:</b> {info['first_name']} {info['last_name']} ({username})\n"
+            f"🎓 <b>Група:</b> {info['institute']}, {info['student_group']}\n"
+            f"📦 <b>ID Замовлення:</b> #{info['order_id']}"
+        )
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Скасувати цей квиток", callback_data=f"adm_cancel_{info['order_id']}_{row}_{seat}")]
+        ])
+        
+        return await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+    # 🌟 ЯКЩО ЦЕ ЗВИЧАЙНИЙ ПОКУПЕЦЬ КУПУЄ МІСЦЯ:
     if not raw_data or raw_data == "null":
         return await message.answer(f"⚠️ Помилка: Дані не отримано.\n<i>(Debug: <code>{raw_data}</code>)</i>", parse_mode="HTML")
+
+    # ... ДАЛІ ТВІЙ СТАРИЙ КОД З try ... except ...
 
     try:
         # 👈 Розпаковуємо наш новий формат "Ряд-Місце|Ряд-Місце"
@@ -797,6 +827,61 @@ async def bl_list(callback: CallbackQuery):
 @dp.message()
 async def global_fallback(message: Message, state: FSMContext):
     await message.answer("🤷‍♂️ Я не розумію цю команду або формат. Будь ласка, користуйся кнопками меню!", reply_markup=main_kb(message.from_user.id))
+
+# --- АДМІНСЬКЕ КЕРУВАННЯ МІСЦЯМИ ---
+@dp.callback_query(F.data == "admin_manage_hall")
+async def admin_manage_hall_list(callback: CallbackQuery):
+    events = await db.get_active_events()
+    organ_events = [ev for ev in events if ev.get('venue_type') == 'organ_hall']
+    if not organ_events: return await callback.message.answer("Немає активних подій в Органному залі.")
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"{ev['title']}", callback_data=f"adm_hall_{ev['id']}")] for ev in organ_events
+    ])
+    await callback.message.edit_text("Обери подію для перегляду карти:", reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("adm_hall_"))
+async def open_admin_hall(callback: CallbackQuery):
+    event_id = int(callback.data.split("_")[2])
+    occ_list = await db.get_occupied_seats(event_id)
+    occ_str = ",".join(occ_list)
+    
+    # ПЕРЕДАЄМО admin=true ТА ev_id В URL!
+    web_app_url = f"https://telegram-bot-tickets-nulp.vercel.app/?occ={occ_str}&admin=true&ev_id={event_id}&t={int(time.time())}"
+    
+    kb = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="🛠 Відкрити карту (Адмін)", web_app=WebAppInfo(url=web_app_url))]],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+    await callback.message.answer("Карта для адміністрування готова 👇", reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("adm_cancel_"))
+async def perform_adm_cancel(callback: CallbackQuery):
+    parts = callback.data.split("_")
+    order_id, row, seat = int(parts[2]), parts[3], parts[4]
+    
+    order = await db.get_order(order_id)
+    if not order: return await callback.answer("Замовлення не знайдено", show_alert=True)
+    
+    event = await db.get_event(order['event_id'])
+    
+    # Видаляємо квиток з бази
+    success = await db.remove_seat_from_order(order_id, row, seat)
+    if success:
+        await callback.message.edit_text(callback.message.text + f"\n\n❌ <b>Квиток (Ряд {row}, Місце {seat}) успішно скасовано!</b>", parse_mode="HTML")
+        
+        # Надсилаємо сповіщення юзеру!
+        try:
+            await bot.send_message(
+                order['user_id'], 
+                f"⚠️ <b>Увага!</b>\nАдміністрація скасувала твій квиток на подію <b>{event['title']}</b> (Ряд {row}, Місце {seat}).\nЯкщо маєш питання — звернись до організаторів.",
+                parse_mode="HTML"
+            )
+        except:
+            pass # Юзер міг заблокувати бота
+    else:
+        await callback.answer("Помилка: місце вже скасовано або не знайдено.", show_alert=True)
 
 async def main():
     await db.connect()
