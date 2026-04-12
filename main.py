@@ -303,10 +303,11 @@ async def handle_web_app_data(message: Message, state: FSMContext):
     try:
         selected_seats = json.loads(raw_data)
         if not isinstance(selected_seats, list) or len(selected_seats) == 0:
-            return await message.answer("⚠️ Помилка: Ти не вибрав жодного місця. Спробуй ще раз.")
+            # ДОДАЛИ ВИВІД ТОГО, ЩО ПРИЙШЛО:
+            return await message.answer(f"⚠️ Помилка: Ти не вибрав жодного місця.\n<i>(Дебаг-інфо: отримано <code>{raw_data}</code>)</i>", parse_mode="HTML")
     except Exception as e:
         print(f"Помилка парсингу JSON: {e}")
-        return await message.answer("⚠️ Помилка обробки даних. Спробуй ще раз.")
+        return await message.answer(f"⚠️ Помилка обробки даних.\n<i>(Дебаг-інфо: отримано <code>{raw_data}</code>)</i>", parse_mode="HTML")
 
     qty = len(selected_seats)
     
