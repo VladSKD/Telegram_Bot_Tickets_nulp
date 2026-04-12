@@ -291,26 +291,35 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
 
 @dp.message(F.web_app_data)
 async def handle_web_app_data(message: Message, state: FSMContext):
-    # Ховаємо кнопку Web App і повертаємо звичайне меню
+    # Повертаємо звичайне меню
     await message.answer("🔄 Обробляю твій вибір...", reply_markup=main_kb(message.from_user.id))
     
-    # 1. Перевіряємо, чи взагалі є якісь дані
     raw_data = message.web_app_data.data
-    if not raw_data:
-        return await message.answer("⚠️ Помилка: Дані з карти не отримано. Спробуй ще раз.")
+    if not raw_data or raw_data == "null":
+        return await message.answer(f"⚠️ Помилка: Дані не отримано.\n<i>(Debug: <code>{raw_data}</code>)</i>", parse_mode="HTML")
 
-    # 2. Пробуємо розпарсити JSON і перевіряємо, чи це список
     try:
-        selected_seats = json.loads(raw_data)
-        if not isinstance(selected_seats, list) or len(selected_seats) == 0:
-            # ДОДАЛИ ВИВІД ТОГО, ЩО ПРИЙШЛО:
-            return await message.answer(f"⚠️ Помилка: Ти не вибрав жодного місця.\n<i>(Дебаг-інфо: отримано <code>{raw_data}</code>)</i>", parse_mode="HTML")
+        # 👈 Розпаковуємо наш новий формат "Ряд-Місце|Ряд-Місце"
+        selected_seats = []
+        seat_items = raw_data.split('|')
+        
+        for item in seat_items:
+            row_part, seat_part = item.split('-')
+            selected_seats.append({
+                'id': item, # Для сумісності
+                'row': row_part,
+                'seat': int(seat_part)
+            })
+            
+        if not selected_seats:
+            return await message.answer("⚠️ Список місць порожній.")
+            
     except Exception as e:
-        print(f"Помилка парсингу JSON: {e}")
-        return await message.answer(f"⚠️ Помилка обробки даних.\n<i>(Дебаг-інфо: отримано <code>{raw_data}</code>)</i>", parse_mode="HTML")
+        return await message.answer(f"⚠️ Помилка обробки: {e}\n<i>(Отримано: <code>{raw_data}</code>)</i>", parse_mode="HTML")
 
     qty = len(selected_seats)
     
+    # Далі логіка без змін
     if qty == 1:
         await state.update_data(qty=qty, selected_seats=selected_seats)
         await process_order_payment(message, state, is_organ=True)
@@ -318,7 +327,7 @@ async def handle_web_app_data(message: Message, state: FSMContext):
         await state.update_data(qty=qty, selected_seats=selected_seats, total_friends=qty-1, current_friend=1, friends=[])
         await message.answer(
             f"👥 Оскільки ти береш {qty} квитків, нам потрібні дані твоїх друзів.\n\n"
-            f"Введи Прізвище, Ім'я та @тег для <b>1-го друга</b> (наприклад: <i>Шевченко Тарас @taras123</i>):", 
+            f"Введи Прізвище, Ім'я та @тег для <b>1-го друга</b>:", 
             parse_mode="HTML"
         )
         await state.set_state(OrderState.waiting_for_friend_data)

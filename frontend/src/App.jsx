@@ -21,7 +21,6 @@ function App() {
   // Він перезапускається щоразу, коли ти тицяєш на місце
   useEffect(() => {
     if (selectedSeats.length > 0) {
-      // Змінили текст, щоб ти візуально побачив, що кеш оновився!
       tg.MainButton.text = `🎟 КУПИТИ (${selectedSeats.length} шт.)`; 
       tg.MainButton.show();
     } else {
@@ -29,20 +28,17 @@ function App() {
     }
 
     const handleMainButtonClick = () => {
-      // Тут React ЗАВЖДИ бачитиме найсвіжіший масив
       if (selectedSeats.length > 0) {
-        tg.sendData(JSON.stringify(selectedSeats));
+        // 👈 Спрощуємо дані: замість JSON шлемо рядок "Ряд-Місце|Ряд-Місце"
+        const dataString = selectedSeats.map(s => `${s.row}-${s.seat}`).join('|');
+        tg.sendData(dataString);
       } else {
         tg.showAlert("Будь ласка, оберіть місця!");
       }
     };
 
     tg.MainButton.onClick(handleMainButtonClick);
-    
-    // Обов'язкова очистка старого кліку
-    return () => {
-      tg.MainButton.offClick(handleMainButtonClick);
-    };
+    return () => tg.MainButton.offClick(handleMainButtonClick);
   }, [selectedSeats]); // Залежність від масиву вибраних місць
 
   const toggleSeat = (row, seatNum) => {
