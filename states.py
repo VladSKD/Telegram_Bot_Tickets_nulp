@@ -45,3 +45,7 @@ class AdminEdit(StatesGroup):
 class AdminBlacklist(StatesGroup):
     add = State()
     remove = State()
+    
+class AdminTickets(StatesGroup):
+    select_event = State()
+    uploading = State()

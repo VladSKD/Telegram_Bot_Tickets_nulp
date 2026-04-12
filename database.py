@@ -16,6 +16,17 @@ class Database:
                 username VARCHAR(255) PRIMARY KEY
             )
         """)
+        await self.pool.execute("""
+            CREATE TABLE IF NOT EXISTS seat_tickets (
+                id SERIAL PRIMARY KEY,
+                event_id INT,
+                row_num VARCHAR(10),
+                seat_num VARCHAR(10),
+                file_id TEXT,
+                file_type TEXT,
+                UNIQUE(event_id, row_num, seat_num)
+            )
+        """)
 
     # --- ЧОРНИЙ СПИСОК ---
     async def add_to_blacklist(self, username: str):
@@ -36,7 +47,21 @@ class Database:
         rows = await self.pool.fetch("SELECT username FROM blacklist")
         return [row['username'] for row in rows]
     # ---------------------
+    
+    async def add_seat_ticket(self, event_id, row, seat, file_id, file_type):
+        await self.pool.execute("""
+            INSERT INTO seat_tickets (event_id, row_num, seat_num, file_id, file_type)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (event_id, row_num, seat_num) 
+            DO UPDATE SET file_id = EXCLUDED.file_id, file_type = EXCLUDED.file_type
+        """, event_id, str(row), str(seat), file_id, file_type)
 
+    async def get_seat_ticket(self, event_id, row, seat):
+        return await self.pool.fetchrow(
+            "SELECT file_id, file_type FROM seat_tickets WHERE event_id = $1 AND row_num = $2 AND seat_num = $3", 
+            event_id, str(row), str(seat)
+        )
+        
     async def register_full_user(self, tg_id, username, first_name, last_name, institute, group):
         query = """
         INSERT INTO users (tg_id, username, first_name, last_name, institute, student_group) 

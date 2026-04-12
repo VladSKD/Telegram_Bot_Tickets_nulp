@@ -11,6 +11,8 @@ from aiohttp import web
 import sheets
 import json
 from aiogram.types import WebAppInfo
+from aiogram.types import ReplyKeyboardRemove
+from states import AdminTickets
 
 async def handle(request):
     return web.Response(text="Bot is alive!")
@@ -60,7 +62,8 @@ def admin_kb():
         [InlineKeyboardButton(text="Редагувати подію", callback_data="admin_edit_list")],
         [InlineKeyboardButton(text="Видалити подію", callback_data="admin_del_list")],
         [InlineKeyboardButton(text="Розсилка", callback_data="admin_broadcast")],
-        [InlineKeyboardButton(text="⚫ Чорний список", callback_data="admin_blacklist")] 
+        [InlineKeyboardButton(text="⚫ Чорний список", callback_data="admin_blacklist")],
+        [InlineKeyboardButton(text="📎 Завантажити квитки (ПДФ/Фото)", callback_data="admin_upload_tickets")]
     ])
 
 # --- ЛОГІКА ЮЗЕРА ---
@@ -204,15 +207,17 @@ async def start_buy(callback: CallbackQuery, state: FSMContext):
     event = await db.get_event(event_id)
     
     if event.get('venue_type') == 'organ_hall':
-        # 1. Дістаємо зайняті місця з БД
         occ_list = await db.get_occupied_seats(event_id)
         occ_str = ",".join(occ_list)
         
-        # 2. Додаємо їх в URL. Заміни домен на свій Vercel!
         web_app_url = f"https://telegram-bot-tickets-nulp.vercel.app/?occ={occ_str}"
         
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🗺 Обрати місця на схемі", web_app=WebAppInfo(url=web_app_url))]])
-        await callback.message.answer("Обери бажані місця на інтерактивній схемі залу 👇", reply_markup=kb)
+        kb = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="🗺 Відкрити схему залу", web_app=WebAppInfo(url=web_app_url))]],
+            resize_keyboard=True,
+            one_time_keyboard=True
+        )
+        await callback.message.answer("Обери бажані місця на інтерактивній схемі залу (натисни кнопку внизу екрану 👇)", reply_markup=kb)
     else:
         await callback.message.answer("🛒 <b>Скільки квитків беремо?</b>\n<i>Напиши просто число (наприклад: 1, 2):</i>", parse_mode="HTML")
         await state.set_state(OrderState.waiting_for_quantity)
@@ -250,7 +255,19 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
                 await sheets.add_order_to_sheet(event['title'], order_id, "Друг", friend_info, "-", "Гість", f"від @{username}", 1, f"Підтверджено (Р{f_seat['row']}М{f_seat['seat']})")
             
             formatted_seats = "\n".join([f"📍 Ряд: <b>{s['row']}</b>, Місце: <b>{s['seat']}</b>" for s in seats])
-            await message.answer(f"✅ <b>Бронювання успішне!</b>\n\n🎟 <b>Твої місця ({qty} шт.):</b>\n{formatted_seats}\n\n📌 {event['success_message']}\n\n<i>Офіційні QR-коди для входу будуть надані організаторами.</i>", parse_mode="HTML")
+            await message.answer(f"✅ <b>Бронювання успішне!</b>\n\n🎟 <b>Твої місця ({qty} шт.):</b>\n{formatted_seats}\n\n📌 {event['success_message']}", parse_mode="HTML")
+            
+            await message.answer("Ось твої офіційні квитки для входу:")
+            for s in seats:
+                ticket_data = await db.get_seat_ticket(event_id, s['row'], s['seat'])
+                if ticket_data:
+                    caption = f"🎟 Ряд {s['row']}, Місце {s['seat']}"
+                    if ticket_data['file_type'] == 'photo':
+                        await bot.send_photo(message.chat.id, ticket_data['file_id'], caption=caption)
+                    else:
+                        await bot.send_document(message.chat.id, ticket_data['file_id'], caption=caption)
+                else:
+                    await message.answer(f"⚠️ Квиток для Ряду {s['row']}, Місця {s['seat']} ще генерується. Організатори надішлють його згодом.")
         else:
             await sheets.add_order_to_sheet(event['title'], order_id, user['last_name'], user['first_name'], username, user['institute'], user['student_group'], 1, "Безкоштовно")
             for friend_info in friends:
@@ -273,6 +290,8 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
 
 @dp.message(F.web_app_data)
 async def handle_web_app_data(message: Message, state: FSMContext):
+    await message.answer("🔄 Обробляю твій вибір...", reply_markup=main_kb(message.from_user.id))
+    
     selected_seats = json.loads(message.web_app_data.data)
     qty = len(selected_seats)
     
@@ -586,6 +605,61 @@ async def save_new_value(message: Message, state: FSMContext):
     await db.update_event_field(data['edit_ev_id'], field_name, int(new_value) if field_name == 'total_tickets' else new_value)
     await message.answer("✅ Зміни успішно збережено!")
     await state.clear()
+
+@dp.callback_query(F.data == "admin_upload_tickets")
+async def admin_upload_tickets_start(callback: CallbackQuery, state: FSMContext):
+    events = await db.get_active_events()
+    organ_events = [ev for ev in events if ev.get('venue_type') == 'organ_hall']
+    
+    if not organ_events:
+        return await callback.message.answer("Немає активних подій в Органному залі.")
+        
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"{ev['title']}", callback_data=f"up_tkt_{ev['id']}")] for ev in organ_events
+    ])
+    await callback.message.edit_text("Обери подію, до якої хочеш прив'язати квитки:", reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("up_tkt_"))
+async def admin_ready_to_upload(callback: CallbackQuery, state: FSMContext):
+    event_id = int(callback.data.split("_")[2])
+    await state.update_data(upload_event_id=event_id)
+    
+    await callback.message.edit_text(
+        "📤 <b>Режим завантаження квитків увімкнено!</b>\n\n"
+        "Надсилай сюди фото або ПДФ файли квитків.\n"
+        "❗️ <b>ОБОВ'ЯЗКОВО</b> в підписі до кожного файлу пиши ряд і місце через пробіл (напр: <code>1 12</code> або <code>12Б 5</code>).\n\n"
+        "<i>Можеш виділити кілька файлів одразу, головне кожному додати підпис.</i>\n\n"
+        "Коли закінчиш, натисни кнопку нижче.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Завершити завантаження", callback_data="finish_upload")]]),
+        parse_mode="HTML"
+    )
+    await state.set_state(AdminTickets.uploading)
+
+@dp.message(AdminTickets.uploading, F.photo | F.document)
+async def process_ticket_file(message: Message, state: FSMContext):
+    caption = message.caption
+    if not caption:
+        return await message.answer("❌ Файл проігноровано: ти забув додати підпис (ряд і місце)!")
+        
+    parts = caption.strip().split()
+    if len(parts) != 2:
+        return await message.answer(f"❌ Файл проігноровано: неправильний формат підпису '{caption}'. Треба 'Ряд Місце' (напр. '1 12').")
+        
+    row, seat = parts[0], parts[1]
+    data = await state.get_data()
+    event_id = data['upload_event_id']
+    
+    f_id = message.photo[-1].file_id if message.photo else message.document.file_id
+    f_type = "photo" if message.photo else "document"
+    
+    await db.add_seat_ticket(event_id, row, seat, f_id, f_type)
+    await message.answer(f"✅ Збережено квиток для: Ряд {row}, Місце {seat}")
+
+@dp.callback_query(AdminTickets.uploading, F.data == "finish_upload")
+async def finish_ticket_upload(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text("✅ Завантаження квитків завершено! Вони автоматично надсилатимуться покупцям.")
+    await state.clear()
+
 
 # --- АДМІН: ПІДТВЕРДЖЕННЯ ОПЛАТИ ---
 @dp.callback_query(F.data.startswith("conf_") | F.data.startswith("reje_"))
