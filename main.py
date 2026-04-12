@@ -64,7 +64,7 @@ def admin_kb():
         [InlineKeyboardButton(text="Видалити подію", callback_data="admin_del_list")],
         [InlineKeyboardButton(text="Розсилка", callback_data="admin_broadcast")],
         [InlineKeyboardButton(text="⚫ Чорний список", callback_data="admin_blacklist")],
-        [InlineKeyboardButton(text="📎 Завантажити квитки (ПДФ/Фото)", callback_data="admin_upload_tickets")]
+        [InlineKeyboardButton(text="📎 Завантажити квитки (ПДФ/Фото)", callback_data="admin_upload_tickets")],
         [InlineKeyboardButton(text="🗺 Керування залом (Адмін)", callback_data="admin_manage_hall")]
     ])
 
