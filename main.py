@@ -1,5 +1,6 @@
 import asyncio
 import os
+import time
 from aiogram import Bot, Dispatcher, F, BaseMiddleware
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -210,7 +211,7 @@ async def start_buy(callback: CallbackQuery, state: FSMContext):
         occ_list = await db.get_occupied_seats(event_id)
         occ_str = ",".join(occ_list)
         
-        web_app_url = f"https://telegram-bot-tickets-nulp.vercel.app/?occ={occ_str}"
+        web_app_url = f"https://telegram-bot-tickets-nulp.vercel.app/?occ={occ_str}&t={int(time.time())}"
         
         kb = ReplyKeyboardMarkup(
             keyboard=[[KeyboardButton(text="🗺 Відкрити схему залу", web_app=WebAppInfo(url=web_app_url))]],
