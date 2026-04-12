@@ -290,9 +290,23 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
 
 @dp.message(F.web_app_data)
 async def handle_web_app_data(message: Message, state: FSMContext):
+    # Ховаємо кнопку Web App і повертаємо звичайне меню
     await message.answer("🔄 Обробляю твій вибір...", reply_markup=main_kb(message.from_user.id))
     
-    selected_seats = json.loads(message.web_app_data.data)
+    # 1. Перевіряємо, чи взагалі є якісь дані
+    raw_data = message.web_app_data.data
+    if not raw_data:
+        return await message.answer("⚠️ Помилка: Дані з карти не отримано. Спробуй ще раз.")
+
+    # 2. Пробуємо розпарсити JSON і перевіряємо, чи це список
+    try:
+        selected_seats = json.loads(raw_data)
+        if not isinstance(selected_seats, list) or len(selected_seats) == 0:
+            return await message.answer("⚠️ Помилка: Ти не вибрав жодного місця. Спробуй ще раз.")
+    except Exception as e:
+        print(f"Помилка парсингу JSON: {e}")
+        return await message.answer("⚠️ Помилка обробки даних. Спробуй ще раз.")
+
     qty = len(selected_seats)
     
     if qty == 1:
