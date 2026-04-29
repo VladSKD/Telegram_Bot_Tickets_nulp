@@ -68,10 +68,12 @@ async def mono_webhook(request):
                         # Додаємо гроші
                         await db.update_order_paid_amount(order_id, incoming_amount)
                         updated_order = await db.get_order(order_id)
-                        total_paid = updated_order.get('paid_amount', 0)
+                        
+                        # Округлюємо до 2 знаків після коми
+                        total_paid = round(float(updated_order.get('paid_amount', 0.0)), 2)
                         
                         min_unit_price = extract_min_price(event['price'])
-                        required_total = min_unit_price * order['ticket_count']
+                        required_total = round(float(min_unit_price * order['ticket_count']), 2)
                         
                         print(f"📊 [БОТ] Замовлення {order_id}. Є: {total_paid}, Треба: {required_total}")
                         
@@ -101,7 +103,8 @@ async def mono_webhook(request):
                                         await bot.send_message(order['user_id'], f"⚠️ Квиток для Ряду {row}, Місця {seat} ще не завантажений адміном.")
                         else:
                             print("⚠️ [БОТ] НЕДОПЛАТА!")
-                            difference = required_total - total_paid
+                            # Рахуємо різницю і теж округлюємо до 2 знаків
+                            difference = round(required_total - total_paid, 2)
                             msg = (f"⚠️ <b>Недостатня сума для квитків!</b>\n\n"
                                    f"📥 Отримано зараз: {incoming_amount} грн\n"
                                    f"💰 Всього сплачено: {total_paid} грн\n"

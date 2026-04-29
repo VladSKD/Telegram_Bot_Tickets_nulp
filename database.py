@@ -34,10 +34,16 @@ class Database:
         except Exception:
             pass # Якщо колонка вже є, ігноруємо помилку
         
+        
+        
         try:
-            await self.pool.execute("ALTER TABLE orders ADD COLUMN paid_amount INT DEFAULT 0;")
+            await self.pool.execute("ALTER TABLE orders ADD COLUMN paid_amount FLOAT DEFAULT 0.0;")
         except Exception:
-            pass # Колонка вже є
+            # Якщо колонка вже є, примусово міняємо її тип на FLOAT (щоб підтримувала копійки)
+            try:
+                await self.pool.execute("ALTER TABLE orders ALTER COLUMN paid_amount TYPE FLOAT;")
+            except:
+                pass
         
         await self.pool.execute("""
             CREATE TABLE IF NOT EXISTS processed_transactions (
@@ -46,10 +52,10 @@ class Database:
         """)
 
     async def update_order_paid_amount(self, order_id, amount_uah):
-        # amount_uah — сума в гривнях, яку ми додаємо до існуючої
+        # Тепер зберігаємо суму з копійками
         await self.pool.execute(
             "UPDATE orders SET paid_amount = paid_amount + $1 WHERE id = $2",
-            int(amount_uah), order_id
+            float(amount_uah), order_id
         )
 
 
