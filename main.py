@@ -26,22 +26,18 @@ async def mono_webhook(request):
     try:
         data = await request.json()
         
-        # Перевіряємо, чи це сповіщення про транзакцію
         if data.get("type") == "StatementItem":
             item = data["data"]["statementItem"]
-            comment = item.get("description", "").strip().upper() # Коментар до платежу
-            amount = item.get("amount", 0) / 100 # Монобанк передає суму в копійках, ділимо на 100
+            comment = (item.get("description") or item.get("comment") or "").strip().upper()
+            amount = abs(item.get("amount", 0)) / 100 
             
-            # Шукаємо наш код у коментарі (наприклад, NULP-152)
             if "NULP-" in comment:
-                # Витягуємо номер замовлення
                 import re
                 match = re.search(r'NULP-(\d+)', comment)
                 if match:
                     order_id = int(match.group(1))
-                    
-                    # Отримуємо замовлення з БД
                     order = await db.get_order(order_id)
+                    
                     if order and order['status'] != 'confirmed':
                         event = await db.get_event(order['event_id'])
                         
@@ -51,22 +47,37 @@ async def mono_webhook(request):
                         
                         # Якщо сума збігається або ціна гнучка (донат)
                         if not price_str.isdigit() or amount >= expected_total:
-                            # 1. Оновлюємо статус в БД
+                            # 1. Підтверджуємо в БД та Таблиці
                             await db.update_order_status(order_id, "confirmed")
-                            
-                            # 2. Оновлюємо Google Таблицю
                             await sheets.update_payment_in_sheet(event['title'], order_id, "Підтверджено (Авто)")
                             
-                            # 3. Надсилаємо квитки та повідомлення юзеру
+                            # 2. Надсилаємо текст успіху
                             await bot.send_message(
                                 order['user_id'], 
-                                f"✅ <b>Оплату знайдено!</b>\n\nТвій платіж на {amount} грн успішно оброблено автоматичною системою.\n\n📌 {event['success_message']}", 
+                                f"✅ <b>Оплату знайдено!</b>\n\nСума: {amount} грн. Код: NULP-{order_id}\n\n📌 {event['success_message']}", 
                                 parse_mode="HTML"
                             )
-                            # (Тут згодом можна додати автоматичну видачу PDF квитків, якщо це органний зал)
-                            
+
+                            # 3. МАГІЯ: ВИДАЧА КВИТКІВ ДЛЯ ОРГАННОГО ЗАЛУ
+                            if order['file_type'] == 'organ_seats' and order['file_id']:
+                                await bot.send_message(order['user_id'], "🎫 Твої офіційні квитки:")
+                                
+                                seats = order['file_id'].split(',')
+                                for s_info in seats:
+                                    row, seat = s_info.split('-')
+                                    ticket = await db.get_seat_ticket(order['event_id'], row, seat)
+                                    
+                                    if ticket:
+                                        caption = f"🎟 Ряд {row}, Місце {seat}"
+                                        if ticket['file_type'] == 'photo':
+                                            await bot.send_photo(order['user_id'], ticket['file_id'], caption=caption)
+                                        else:
+                                            await bot.send_document(order['user_id'], ticket['file_id'], caption=caption)
+                                    else:
+                                        await bot.send_message(order['user_id'], f"⚠️ Квиток для Ряду {row}, Місця {seat} ще не завантажений адміном. Тобі надішлють його пізніше.")
+            
     except Exception as e:
-        print(f"Помилка обробки вебхуку Монобанку: {e}")
+        print(f"❌ Помилка вебхуку: {e}")
         
     return web.Response(text="OK", status=200)
 
