@@ -86,22 +86,35 @@ def _mark_seat_as_cancelled(event_title, order_id, row_num, seat_num):
 async def cancel_seat_in_sheet(*args):
     await asyncio.to_thread(_mark_seat_as_cancelled, *args)
     
-def _add_user_to_registry(last_name, first_name, username, institute, group):
+def _upsert_user_in_registry(last_name, first_name, username, institute, group):
     try:
         client = get_client()
         if not client: return
         
-        # Відкриваємо таблицю за твоїм посиланням
         doc = client.open_by_url("https://docs.google.com/spreadsheets/d/1CYx4V7_p7keMeKUy2Q_5Rtzy8OuehsifceVTObFD5cQ/edit")
-        
-        # Беремо перший аркуш (Sheet1)
         ws = doc.sheet1 
         
-        # Додаємо рядок
-        ws.append_row([last_name, first_name, f"@{username}" if username else "-", institute, group])
-        print(f"✅ [SHEETS] Користувача {last_name} додано в загальну таблицю!")
-    except Exception as e:
-        print(f"❌ [SHEETS ERROR] Не вдалося записати юзера: {e}")
+        user_tag = f"@{username}" if username else "-"
+        
+        # 1. Шукаємо, чи є вже такий юзер у колонці Telegram (стовпчик 3)
+        try:
+            cell = ws.find(user_tag, in_column=3)
+            if cell:
+                # 2. Якщо знайшли — оновлюємо весь рядок (стовпчики 1, 2, 4, 5)
+                # Оновлюємо Прізвище (A), Ім'я (B), Інститут (D), Групу (E)
+                ws.update(f"A{cell.row}:B{cell.row}", [[last_name, first_name]])
+                ws.update(f"D{cell.row}:E{cell.row}", [[institute, group]])
+                print(f"✅ [SHEETS] Дані користувача {user_tag} оновлено в реєстрі.")
+                return
+        except gspread.exceptions.CellNotFound:
+            pass # Юзера не знайдено, переходимо до додавання
 
-async def add_user_to_registry(*args):
-    await asyncio.to_thread(_add_user_to_registry, *args)
+        # 3. Якщо не знайшли — просто додаємо новий рядок
+        ws.append_row([last_name, first_name, user_tag, institute, group])
+        print(f"✅ [SHEETS] Нового користувача {last_name} додано в реєстр.")
+        
+    except Exception as e:
+        print(f"❌ [SHEETS ERROR] Помилка синхронізації профілю: {e}")
+
+async def upsert_user_in_registry(*args):
+    await asyncio.to_thread(_upsert_user_in_registry, *args)

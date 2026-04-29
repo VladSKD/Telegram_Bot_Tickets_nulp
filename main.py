@@ -247,7 +247,8 @@ async def process_group(message: Message, state: FSMContext):
     )
     
     # 2. ДУБЛЮЄМО В ГУГЛ ТАБЛИЦЮ (прямо за твоїм посиланням)
-    asyncio.create_task(sheets.add_user_to_registry(
+    # 2. СИНХРОНІЗАЦІЯ З РЕЄСТРОМ (Upsert)
+    asyncio.create_task(sheets.upsert_user_in_registry(
         user_data['last_name'], 
         user_data['first_name'], 
         message.from_user.username,
@@ -311,6 +312,18 @@ async def save_new_profile_value(message: Message, state: FSMContext):
 
     data = await state.get_data()
     await db.update_user_field(message.from_user.id, data['edit_field'], message.text)
+    
+
+    user = await db.get_user(message.from_user.id)
+    if user:
+        asyncio.create_task(sheets.upsert_user_in_registry(
+            user['last_name'], 
+            user['first_name'], 
+            user['username'],
+            user['institute'], 
+            user['student_group']
+        ))
+
     
     await message.answer("✅ <b>Дані успішно оновлено!</b>", parse_mode="HTML")
     await state.clear()
