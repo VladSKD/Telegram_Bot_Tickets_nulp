@@ -413,6 +413,13 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
         order_id = await db.add_order(message.from_user.id, event_id, qty, f_id, f_type)
         await db.update_order_status(order_id, "pending")
         
+        # 👇👇👇 ОСЬ ЦІ 4 РЯДКИ ТРЕБА ДОДАТИ 👇👇👇
+        status_str = "Очікує оплати"
+        await sheets.add_order_to_sheet(event['title'], order_id, user['last_name'], user['first_name'], username, user['institute'], user['student_group'], 1, status_str)
+        for friend_info in friends:
+            await sheets.add_order_to_sheet(event['title'], order_id, "Друг", friend_info, "-", "Гість", f"від @{username}", 1, status_str)
+        # 👆👆👆 ============================== 👆👆👆
+        
         price_str = str(event['price']).strip()
         min_unit_price = extract_min_price(price_str)
         total_required = min_unit_price * qty
