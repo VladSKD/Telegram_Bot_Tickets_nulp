@@ -282,18 +282,21 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
         await state.clear()
     else:
         # ПЛАТНА ПОДІЯ...
-        if event['is_fixed_price']:
-            # Якщо ціна фіксована (число), рахуємо загальну суму
-            total_price = int(event['price']) * qty
+        # Беремо ціну з бази і переводимо в рядок на всякий випадок
+        price_str = str(event['price']).strip()
+        
+        if price_str.isdigit():
+            # Якщо ціна складається ТІЛЬКИ з цифр (фіксована), рахуємо загальну суму
+            total_price = int(price_str) * qty
             text = (f"📝 <b>Твоє замовлення:</b> {qty} шт.\n"
-                    f"💳 <b>До оплати:</b> {total_price} грн <i>(по {event['price']} грн/шт)</i>\n\n"
+                    f"💳 <b>До оплати:</b> {total_price} грн <i>(по {price_str} грн/шт)</i>\n\n"
                     f"🔗 <b>Банка:</b> {event['bank_link']}\n"
                     f"🏦 <b>Картка:</b> <code>{event['card_number']}</code>\n\n"
                     f"📸 <b>Наступний крок:</b>\nОплати та надішли сюди скріншот або PDF-квитанцію 👇")
         else:
-            # Якщо ціна гнучка (текст типу "Донат від 50 грн"), просто виводимо текст
+            # Якщо ціна містить текст ("Донат від 50 грн" тощо), просто виводимо текст
             text = (f"📝 <b>Твоє замовлення:</b> {qty} шт.\n"
-                    f"💵 <b>Вартість:</b> {event['price']}\n\n"
+                    f"💵 <b>Вартість:</b> {price_str}\n\n"
                     f"⚠️ <i>Уважно розрахуй загальну суму та здійсни оплату!</i>\n\n"
                     f"🔗 <b>Банка:</b> {event['bank_link']}\n"
                     f"🏦 <b>Картка:</b> <code>{event['card_number']}</code>\n\n"
