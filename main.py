@@ -282,11 +282,22 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
         await state.clear()
     else:
         # ПЛАТНА ПОДІЯ...
-        total_price = int(event['price']) * qty
         if event['is_fixed_price']:
-            text = f"📝 <b>Твоє замовлення:</b> {qty} шт.\n💳 <b>До оплати:</b> {total_price} грн <i>(по {event['price']} грн/шт)</i>\n\n🔗 <b>Банка:</b> {event['bank_link']}\n🏦 <b>Картка:</b> <code>{event['card_number']}</code>\n\n📸 <b>Наступний крок:</b>\nОплати та надішли сюди скріншот або PDF-квитанцію 👇"
+            # Якщо ціна фіксована (число), рахуємо загальну суму
+            total_price = int(event['price']) * qty
+            text = (f"📝 <b>Твоє замовлення:</b> {qty} шт.\n"
+                    f"💳 <b>До оплати:</b> {total_price} грн <i>(по {event['price']} грн/шт)</i>\n\n"
+                    f"🔗 <b>Банка:</b> {event['bank_link']}\n"
+                    f"🏦 <b>Картка:</b> <code>{event['card_number']}</code>\n\n"
+                    f"📸 <b>Наступний крок:</b>\nОплати та надішли сюди скріншот або PDF-квитанцію 👇")
         else:
-            text = f"📝 <b>Твоє замовлення:</b> {qty} шт.\n💵 <b>Вартість:</b> {event['price']}\n\n⚠️ <i>Уважно розрахуй загальну суму та здійсни оплату!</i>\n\n🔗 <b>Банка:</b> {event['bank_link']}\n🏦 <b>Картка:</b> <code>{event['card_number']}</code>\n\n📸 <b>Наступний крок:</b>\nНадішли скріншот або PDF-квитанцію 👇"
+            # Якщо ціна гнучка (текст типу "Донат від 50 грн"), просто виводимо текст
+            text = (f"📝 <b>Твоє замовлення:</b> {qty} шт.\n"
+                    f"💵 <b>Вартість:</b> {event['price']}\n\n"
+                    f"⚠️ <i>Уважно розрахуй загальну суму та здійсни оплату!</i>\n\n"
+                    f"🔗 <b>Банка:</b> {event['bank_link']}\n"
+                    f"🏦 <b>Картка:</b> <code>{event['card_number']}</code>\n\n"
+                    f"📸 <b>Наступний крок:</b>\nНадішли скріншот або PDF-квитанцію 👇")
         
         await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
         await state.set_state(OrderState.waiting_for_proof)
