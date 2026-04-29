@@ -774,21 +774,10 @@ async def add_ev_link(message: Message, state: FSMContext):
 @dp.message(AddEventState.card_number)
 async def add_ev_card(message: Message, state: FSMContext):
     await state.update_data(card=message.text)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Так, підтверджувати вручну", callback_data="conf_yes")],
-        [InlineKeyboardButton(text="⚡️ Ні, автоматичне підтвердження", callback_data="conf_no")]
-    ])
-    await message.answer("Чи потрібно адміністратору вручну перевіряти скріншоти оплат для цієї події?", reply_markup=kb)
-    await state.set_state(AddEventState.requires_confirmation)
-
-@dp.callback_query(AddEventState.requires_confirmation, F.data.in_(["conf_yes", "conf_no"]))
-async def ask_success_message(callback: CallbackQuery, state: FSMContext):
-    req_conf = (callback.data == "conf_yes")
-    await state.update_data(requires_confirmation=req_conf)
-    await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer("Введіть фінальне повідомлення після підтвердження оплати:")
+    await message.answer("Введіть фінальне повідомлення після підтвердження оплати:")
     await state.set_state(AddEventState.success_message)
-    await callback.answer()
+
+
 
 @dp.message(AddEventState.success_message)
 async def add_ev_final(message: Message, state: FSMContext):
@@ -797,7 +786,6 @@ async def add_ev_final(message: Message, state: FSMContext):
         d['title'], d['desc'], d['photo_id'], d['dt'], d['venue_type'], 
         d['location'], d['total_tickets'], d['is_free'], d['price'], 
         d.get('link', ''), d.get('card', ''), message.text, 
-        d.get('requires_confirmation', True) # Передаємо вибір адміна
     )
     await message.answer("✅ Подію успішно додано!", reply_markup=main_kb(message.from_user.id))
     await state.clear()
