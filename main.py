@@ -24,18 +24,24 @@ async def handle(request):
 async def mono_webhook(request):
     try:
         data = await request.json()
-        print(f"🔥 [МОНОБАНК] ПРИЙШОВ ВЕБХУК: {data}") # <--- ДИВИСЬ СЮДИ В ЛОГАХ
+        print(f"🔥 [МОНОБАНК] ПРИЙШОВ ВЕБХУК: {data}")
         
         if data.get("type") == "StatementItem":
             item = data["data"]["statementItem"]
-            comment = (item.get("description") or item.get("comment") or "").strip().upper()
+            
+            # --- ВИТЯГУЄМО ВСЕ МОЖЛИВЕ ---
+            desc = item.get("description", "")
+            comm = item.get("comment", "")
+            # Зліплюємо в один рядок і переводимо у верхній регістр
+            full_text = f"{desc} {comm}".strip().upper()
+            
             amount = abs(item.get("amount", 0)) / 100 
             
-            print(f"💰 [МОНОБАНК] Сума: {amount}, Коментар: {comment}") # <--- І СЮДИ
+            print(f"💰 [МОНОБАНК] Сума: {amount}, Шукаємо в: {full_text}")
             
-            if "NULP-" in comment:
+            if "NULP-" in full_text:
                 import re
-                match = re.search(r'NULP-(\d+)', comment)
+                match = re.search(r'NULP-(\d+)', full_text)
                 if match:
                     order_id = int(match.group(1))
                     print(f"🔍 [БОТ] Знайдено код NULP-{order_id}. Шукаю в базі...")
