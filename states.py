@@ -32,6 +32,7 @@ class AddEventState(StatesGroup):
     price = State()
     bank_link = State()
     card_number = State()
+    requires_confirmation = State() 
     success_message = State()
     
 class AdminDelete(StatesGroup):

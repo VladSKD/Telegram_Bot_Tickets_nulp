@@ -441,17 +441,16 @@ async def get_proof(message: Message, state: FSMContext):
     event = await db.get_event(data['ev_id'])
     username = user['username'] if user['username'] else "Без_юзернейму"
     
-    # Запис покупця
-    await sheets.add_order_to_sheet(event['title'], order_id, user['last_name'], user['first_name'], username, user['institute'], user['student_group'], 1, "Очікує")
+    # Визначаємо, чи потрібне підтвердження (якщо колонка пуста - за замовчуванням True)
+    req_conf = event.get('requires_confirmation', True)
+    status_str = "Очікує" if req_conf else "Підтверджено"
+    
+    # Запис покупця в таблицю
+    await sheets.add_order_to_sheet(event['title'], order_id, user['last_name'], user['first_name'], username, user['institute'], user['student_group'], 1, status_str)
     
     # Запис друзів
     for friend_info in friends:
-        await sheets.add_order_to_sheet(event['title'], order_id, "Друг", friend_info, "-", "Гість", f"від @{username}", 1, "Очікує")
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Підтвердити", callback_data=f"conf_{order_id}")],
-        [InlineKeyboardButton(text="Відхилити", callback_data=f"reje_{order_id}")]
-    ])
+        await sheets.add_order_to_sheet(event['title'], order_id, "Друг", friend_info, "-", "Гість", f"від @{username}", 1, status_str)
     
     caption = (
         f"🚨 Нова оплата #{order_id}!\n\n"
@@ -460,14 +459,32 @@ async def get_proof(message: Message, state: FSMContext):
         f"🎟 Кількість квитків: {qty} шт."
     )
                
-    for admin in ADMIN_IDS:
-        try:
-            if f_type == "photo": await bot.send_photo(admin, f_id, caption=caption, reply_markup=kb)
-            else: await bot.send_document(admin, f_id, caption=caption, reply_markup=kb)
-        except Exception:
-            pass
-            
-    await message.answer("⏳ <b>Квитанцію прийнято!</b>\nОчікуй на підтвердження адміністратором. Ми надішлемо тобі повідомлення.", parse_mode="HTML")
+    if req_conf:
+        # ЗВИЧАЙНИЙ РЕЖИМ (з кнопками)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Підтвердити", callback_data=f"conf_{order_id}")],
+            [InlineKeyboardButton(text="Відхилити", callback_data=f"reje_{order_id}")]
+        ])
+        for admin in ADMIN_IDS:
+            try:
+                if f_type == "photo": await bot.send_photo(admin, f_id, caption=caption, reply_markup=kb)
+                else: await bot.send_document(admin, f_id, caption=caption, reply_markup=kb)
+            except Exception:
+                pass
+        await message.answer("⏳ <b>Квитанцію прийнято!</b>\nОчікуй на підтвердження адміністратором. Ми надішлемо тобі повідомлення.", parse_mode="HTML")
+    else:
+        # РЕЖИМ АВТОПІДТВЕРДЖЕННЯ
+        caption += "\n\n✅ <i>(Автоматично підтверджено системою)</i>"
+        for admin in ADMIN_IDS:
+            try:
+                if f_type == "photo": await bot.send_photo(admin, f_id, caption=caption)
+                else: await bot.send_document(admin, f_id, caption=caption)
+            except Exception:
+                pass
+                
+        await db.update_order_status(order_id, "confirmed")
+        await message.answer(f"✅ <b>Квитанцію прийнято та підтверджено!</b>\n\n{event['success_message']}", parse_mode="HTML")
+        
     await state.clear()
 
 @dp.message(OrderState.waiting_for_proof)
@@ -556,6 +573,7 @@ async def set_ev_type(callback: CallbackQuery, state: FSMContext):
     await state.update_data(is_free=is_free)
     
     if is_free:
+        await state.update_data(is_fixed_price=True, price="0", link="", card="", requires_confirmation=False)
         await state.update_data(is_fixed_price=True, price="0", link="", card="")
         await callback.message.answer("Введіть фінальне повідомлення (напр. 'Забирай квиток в 218 кабінеті'):")
         await state.set_state(AddEventState.success_message)
@@ -595,13 +613,31 @@ async def add_ev_link(message: Message, state: FSMContext):
 @dp.message(AddEventState.card_number)
 async def add_ev_card(message: Message, state: FSMContext):
     await state.update_data(card=message.text)
-    await message.answer("Введіть фінальне повідомлення після підтвердження оплати:")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Так, підтверджувати вручну", callback_data="conf_yes")],
+        [InlineKeyboardButton(text="⚡️ Ні, автоматичне підтвердження", callback_data="conf_no")]
+    ])
+    await message.answer("Чи потрібно адміністратору вручну перевіряти скріншоти оплат для цієї події?", reply_markup=kb)
+    await state.set_state(AddEventState.requires_confirmation)
+
+@dp.callback_query(AddEventState.requires_confirmation, F.data.in_(["conf_yes", "conf_no"]))
+async def ask_success_message(callback: CallbackQuery, state: FSMContext):
+    req_conf = (callback.data == "conf_yes")
+    await state.update_data(requires_confirmation=req_conf)
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer("Введіть фінальне повідомлення після підтвердження оплати:")
     await state.set_state(AddEventState.success_message)
+    await callback.answer()
 
 @dp.message(AddEventState.success_message)
 async def add_ev_final(message: Message, state: FSMContext):
     d = await state.get_data()
-    await db.add_event(d['title'], d['desc'], d['photo_id'], d['dt'], d['venue_type'], d['location'], d['total_tickets'], d['is_free'], d['price'], d.get('link', ''), d.get('card', ''), message.text)
+    await db.add_event(
+        d['title'], d['desc'], d['photo_id'], d['dt'], d['venue_type'], 
+        d['location'], d['total_tickets'], d['is_free'], d['price'], 
+        d.get('link', ''), d.get('card', ''), message.text, 
+        d.get('requires_confirmation', True) # Передаємо вибір адміна
+    )
     await message.answer("✅ Подію успішно додано!", reply_markup=main_kb(message.from_user.id))
     await state.clear()
     
