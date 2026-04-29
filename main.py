@@ -222,7 +222,7 @@ async def process_last_name(message: Message, state: FSMContext):
 @dp.message(Registration.waiting_for_first_name)
 async def process_first_name(message: Message, state: FSMContext):
     await state.update_data(first_name=message.text)
-    await message.answer("🏛 <b>З якого ти інституту?</b>\n<i>(напр. ІКНІ, ІАРХ тощо):</i>", parse_mode="HTML")
+    await message.answer("🏛 <b>З якого ти інституту?</b>\n<i>(напр. ІКНІ, ІАРД тощо):</i>", parse_mode="HTML")
     await state.set_state(Registration.waiting_for_institute)
 
 @dp.message(Registration.waiting_for_institute)
@@ -294,7 +294,7 @@ async def ask_new_profile_value(callback: CallbackQuery, state: FSMContext):
     
     prompts = {
         "last_name": "нове Прізвище", "first_name": "нове Ім'я",
-        "institute": "свій Інститут (напр. ІКНІ, ІАРХ)", "group": "свою Групу (напр. КН-201)"
+        "institute": "свій Інститут (напр. ІКНІ, ІАРД)", "group": "свою Групу (напр. КН-201)"
     }
     
     await callback.message.edit_reply_markup(reply_markup=None)
