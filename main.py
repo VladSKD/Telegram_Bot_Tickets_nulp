@@ -21,63 +21,70 @@ import aiohttp
 async def handle(request):
     return web.Response(text="Bot is alive!")
 
-# --- НОВА ФУНКЦІЯ: ПРИЙОМ ДАНИХ ВІД МОНОБАНКУ ---
 async def mono_webhook(request):
     try:
         data = await request.json()
+        print(f"🔥 [МОНОБАНК] ПРИЙШОВ ВЕБХУК: {data}") # <--- ДИВИСЬ СЮДИ В ЛОГАХ
         
         if data.get("type") == "StatementItem":
             item = data["data"]["statementItem"]
             comment = (item.get("description") or item.get("comment") or "").strip().upper()
             amount = abs(item.get("amount", 0)) / 100 
             
+            print(f"💰 [МОНОБАНК] Сума: {amount}, Коментар: {comment}") # <--- І СЮДИ
+            
             if "NULP-" in comment:
                 import re
                 match = re.search(r'NULP-(\d+)', comment)
                 if match:
                     order_id = int(match.group(1))
+                    print(f"🔍 [БОТ] Знайдено код NULP-{order_id}. Шукаю в базі...")
                     order = await db.get_order(order_id)
                     
-                    if order and order['status'] != 'confirmed':
-                        event = await db.get_event(order['event_id'])
-                        
-                        # Перевіряємо суму (якщо ціна фіксована)
-                        price_str = str(event['price']).strip()
-                        expected_total = int(price_str) * order['ticket_count'] if price_str.isdigit() else 0
-                        
-                        # Якщо сума збігається або ціна гнучка (донат)
-                        if not price_str.isdigit() or amount >= expected_total:
-                            # 1. Підтверджуємо в БД та Таблиці
-                            await db.update_order_status(order_id, "confirmed")
-                            await sheets.update_payment_in_sheet(event['title'], order_id, "Підтверджено (Авто)")
+                    if order:
+                        print(f"📦 [БОТ] Замовлення знайдено! Статус: {order['status']}")
+                        if order['status'] != 'confirmed':
+                            event = await db.get_event(order['event_id'])
                             
-                            # 2. Надсилаємо текст успіху
-                            await bot.send_message(
-                                order['user_id'], 
-                                f"✅ <b>Оплату знайдено!</b>\n\nСума: {amount} грн. Код: NULP-{order_id}\n\n📌 {event['success_message']}", 
-                                parse_mode="HTML"
-                            )
-
-                            # 3. МАГІЯ: ВИДАЧА КВИТКІВ ДЛЯ ОРГАННОГО ЗАЛУ
-                            if order['file_type'] == 'organ_seats' and order['file_id']:
-                                await bot.send_message(order['user_id'], "🎫 Твої офіційні квитки:")
+                            price_str = str(event['price']).strip()
+                            expected_total = int(price_str) * order['ticket_count'] if price_str.isdigit() else 0
+                            
+                            if not price_str.isdigit() or amount >= expected_total:
+                                print(f"✅ [БОТ] Сума сходиться! Підтверджую...")
+                                await db.update_order_status(order_id, "confirmed")
+                                await sheets.update_payment_in_sheet(event['title'], order_id, "Підтверджено (Авто)")
                                 
-                                seats = order['file_id'].split(',')
-                                for s_info in seats:
-                                    row, seat = s_info.split('-')
-                                    ticket = await db.get_seat_ticket(order['event_id'], row, seat)
-                                    
-                                    if ticket:
-                                        caption = f"🎟 Ряд {row}, Місце {seat}"
-                                        if ticket['file_type'] == 'photo':
-                                            await bot.send_photo(order['user_id'], ticket['file_id'], caption=caption)
+                                await bot.send_message(
+                                    order['user_id'], 
+                                    f"✅ <b>Оплату знайдено!</b>\n\nСума: {amount} грн. Код: NULP-{order_id}\n\n📌 {event['success_message']}", 
+                                    parse_mode="HTML"
+                                )
+
+                                if order['file_type'] == 'organ_seats' and order['file_id']:
+                                    await bot.send_message(order['user_id'], "🎫 Твої офіційні квитки:")
+                                    seats = order['file_id'].split(',')
+                                    for s_info in seats:
+                                        row, seat = s_info.split('-')
+                                        ticket = await db.get_seat_ticket(order['event_id'], row, seat)
+                                        if ticket:
+                                            caption = f"🎟 Ряд {row}, Місце {seat}"
+                                            if ticket['file_type'] == 'photo':
+                                                await bot.send_photo(order['user_id'], ticket['file_id'], caption=caption)
+                                            else:
+                                                await bot.send_document(order['user_id'], ticket['file_id'], caption=caption)
                                         else:
-                                            await bot.send_document(order['user_id'], ticket['file_id'], caption=caption)
-                                    else:
-                                        await bot.send_message(order['user_id'], f"⚠️ Квиток для Ряду {row}, Місця {seat} ще не завантажений адміном. Тобі надішлють його пізніше.")
-            
+                                            await bot.send_message(order['user_id'], f"⚠️ Квиток для Ряду {row}, Місця {seat} ще не завантажений адміном.")
+                            else:
+                                print(f"❌ [БОТ] Сума не сходиться! Очікувалось {expected_total}, прийшло {amount}")
+                        else:
+                            print(f"⚠️ [БОТ] Замовлення вже було підтверджено раніше.")
+                    else:
+                        print(f"❌ [БОТ] Замовлення з ID {order_id} не знайдено в базі!")
+            else:
+                print(f"⚠️ [БОТ] У коментарі немає слова 'NULP-'")
+                
     except Exception as e:
-        print(f"❌ Помилка вебхуку: {e}")
+        print(f"❌ [ПОМИЛКА ВЕБХУКУ]: {e}")
         
     return web.Response(text="OK", status=200)
 
