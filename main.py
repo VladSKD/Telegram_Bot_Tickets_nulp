@@ -24,8 +24,18 @@ async def handle(request):
 async def mono_webhook(request):
     try:
         data = await request.json()
+        
         if data.get("type") == "StatementItem":
             item = data["data"]["statementItem"]
+            
+            # 1. Беремо унікальний ID транзакції
+            tx_id = item.get("id")
+            
+            # 2. ПЕРЕВІРКА НА ДУБЛІКАТ
+            if await db.is_transaction_processed(tx_id):
+                print(f"♻️ [МОНОБАНК] Транзакція {tx_id} вже оброблена раніше. Ігнорую дубль.")
+                return web.Response(text="OK", status=200)
+
             desc = item.get("description", "")
             comm = item.get("comment", "")
             full_text = f"{desc} {comm}".strip().upper()
@@ -33,6 +43,7 @@ async def mono_webhook(request):
             incoming_amount = abs(item.get("amount", 0)) / 100 
             
             if "NULP-" in full_text:
+                import re
                 match = re.search(r'NULP-(\d+)', full_text)
                 if match:
                     order_id = int(match.group(1))
@@ -41,14 +52,15 @@ async def mono_webhook(request):
                     if order and order['status'] != 'confirmed':
                         event = await db.get_event(order['event_id'])
                         
-                        # 1. Додаємо гроші до "скарбнички" замовлення
+                        # 3. ЗАПИСУЄМО ТРАНЗАКЦІЮ ЯК ОБРОБЛЕНУ (щоб більше не додавати ці гроші)
+                        await db.mark_transaction_processed(tx_id)
+                        
+                        # 4. Додаємо гроші
                         await db.update_order_paid_amount(order_id, incoming_amount)
                         
-                        # Отримуємо оновлені дані замовлення
                         updated_order = await db.get_order(order_id)
                         total_paid = updated_order.get('paid_amount', 0)
                         
-                        # 2. Рахуємо, скільки мінімально треба
                         min_unit_price = extract_min_price(event['price'])
                         required_total = min_unit_price * order['ticket_count']
                         
@@ -61,7 +73,21 @@ async def mono_webhook(request):
                                    f"💰 Всього сплачено: {total_paid} грн.\n"
                                    f"📌 {event['success_message']}")
                             await bot.send_message(order['user_id'], msg, parse_mode="HTML")
-                            # Тут можна додати логіку видачі квитків органного залу...
+                            
+                            if order['file_type'] == 'organ_seats' and order['file_id']:
+                                await bot.send_message(order['user_id'], "🎫 Твої офіційні квитки:")
+                                seats = order['file_id'].split(',')
+                                for s_info in seats:
+                                    row, seat = s_info.split('-')
+                                    ticket = await db.get_seat_ticket(order['event_id'], row, seat)
+                                    if ticket:
+                                        caption = f"🎟 Ряд {row}, Місце {seat}"
+                                        if ticket['file_type'] == 'photo':
+                                            await bot.send_photo(order['user_id'], ticket['file_id'], caption=caption)
+                                        else:
+                                            await bot.send_document(order['user_id'], ticket['file_id'], caption=caption)
+                                    else:
+                                        await bot.send_message(order['user_id'], f"⚠️ Квиток для Ряду {row}, Місця {seat} ще не завантажений адміном.")
                         else:
                             # НЕДОПЛАТА
                             difference = required_total - total_paid
@@ -71,13 +97,10 @@ async def mono_webhook(request):
                                    f"❌ <b>Потрібно ще: {difference} грн</b>\n\n"
                                    f"Будь ласка, доплати різницю на ту саму Банку, <u>обов'язково</u> вказавши той самий код: <code>NULP-{order_id}</code>")
                             await bot.send_message(order['user_id'], msg, parse_mode="HTML")
-                            
-                            # Оновлюємо статус в таблиці, щоб адмін бачив недоплату
                             await sheets.update_payment_in_sheet(event['title'], order_id, f"Недоплата (є {total_paid} з {required_total})")
 
     except Exception as e:
         print(f"❌ Помилка: {e}")
-        
     return web.Response(text="OK", status=200)
 
 # --- РЕЄСТРАЦІЯ ВЕБХУКУ В МОНОБАНКУ ---

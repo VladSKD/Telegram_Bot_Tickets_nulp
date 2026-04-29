@@ -38,6 +38,12 @@ class Database:
             await self.pool.execute("ALTER TABLE orders ADD COLUMN paid_amount INT DEFAULT 0;")
         except Exception:
             pass # Колонка вже є
+        
+        await self.pool.execute("""
+            CREATE TABLE IF NOT EXISTS processed_transactions (
+                tx_id VARCHAR(255) PRIMARY KEY
+            )
+        """)
 
     async def update_order_paid_amount(self, order_id, amount_uah):
         # amount_uah — сума в гривнях, яку ми додаємо до існуючої
@@ -217,3 +223,10 @@ class Database:
             "UPDATE orders SET file_id = $1, file_type = $2, status = 'pending_manual' WHERE id = $3",
             file_id, f_type, order_id
         )
+        
+    async def is_transaction_processed(self, tx_id: str):
+        val = await self.pool.fetchval("SELECT 1 FROM processed_transactions WHERE tx_id = $1", tx_id)
+        return bool(val)
+
+    async def mark_transaction_processed(self, tx_id: str):
+        await self.pool.execute("INSERT INTO processed_transactions (tx_id) VALUES ($1) ON CONFLICT DO NOTHING", tx_id)
