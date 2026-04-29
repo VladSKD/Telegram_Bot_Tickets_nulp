@@ -15,17 +15,91 @@ import json
 from aiogram.types import WebAppInfo
 from aiogram.types import ReplyKeyboardRemove
 from states import AdminTickets
+from aiohttp import web
+import aiohttp 
 
 async def handle(request):
     return web.Response(text="Bot is alive!")
 
+# --- НОВА ФУНКЦІЯ: ПРИЙОМ ДАНИХ ВІД МОНОБАНКУ ---
+async def mono_webhook(request):
+    try:
+        data = await request.json()
+        
+        # Перевіряємо, чи це сповіщення про транзакцію
+        if data.get("type") == "StatementItem":
+            item = data["data"]["statementItem"]
+            comment = item.get("description", "").strip().upper() # Коментар до платежу
+            amount = item.get("amount", 0) / 100 # Монобанк передає суму в копійках, ділимо на 100
+            
+            # Шукаємо наш код у коментарі (наприклад, NULP-152)
+            if "NULP-" in comment:
+                # Витягуємо номер замовлення
+                import re
+                match = re.search(r'NULP-(\d+)', comment)
+                if match:
+                    order_id = int(match.group(1))
+                    
+                    # Отримуємо замовлення з БД
+                    order = await db.get_order(order_id)
+                    if order and order['status'] != 'confirmed':
+                        event = await db.get_event(order['event_id'])
+                        
+                        # Перевіряємо суму (якщо ціна фіксована)
+                        price_str = str(event['price']).strip()
+                        expected_total = int(price_str) * order['ticket_count'] if price_str.isdigit() else 0
+                        
+                        # Якщо сума збігається або ціна гнучка (донат)
+                        if not price_str.isdigit() or amount >= expected_total:
+                            # 1. Оновлюємо статус в БД
+                            await db.update_order_status(order_id, "confirmed")
+                            
+                            # 2. Оновлюємо Google Таблицю
+                            await sheets.update_payment_in_sheet(event['title'], order_id, "Підтверджено (Авто)")
+                            
+                            # 3. Надсилаємо квитки та повідомлення юзеру
+                            await bot.send_message(
+                                order['user_id'], 
+                                f"✅ <b>Оплату знайдено!</b>\n\nТвій платіж на {amount} грн успішно оброблено автоматичною системою.\n\n📌 {event['success_message']}", 
+                                parse_mode="HTML"
+                            )
+                            # (Тут згодом можна додати автоматичну видачу PDF квитків, якщо це органний зал)
+                            
+    except Exception as e:
+        print(f"Помилка обробки вебхуку Монобанку: {e}")
+        
+    return web.Response(text="OK", status=200)
+
+# --- РЕЄСТРАЦІЯ ВЕБХУКУ В МОНОБАНКУ ---
+async def setup_mono_webhook():
+    mono_token = os.getenv("MONO_TOKEN")
+    web_url = os.getenv("WEB_APP_URL")
+    if mono_token and web_url:
+        webhook_endpoint = f"{web_url.rstrip('/')}/mono"
+        headers = {"X-Token": mono_token}
+        payload = {"webHookUrl": webhook_endpoint}
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.post("https://api.monobank.ua/personal/webhook", headers=headers, json=payload) as resp:
+                    if resp.status == 200:
+                        print(f"✅ Вебхук Монобанку успішно встановлено на {webhook_endpoint}")
+                    else:
+                        print(f"⚠️ Помилка встановлення вебхуку: {await resp.text()}")
+            except Exception as e:
+                print(f"⚠️ Не вдалося підключитися до Монобанку: {e}")
+
 async def start_webhook():
     app = web.Application()
     app.router.add_get("/", handle)
+    app.router.add_post("/mono", mono_webhook) # Додали слухача для Моно
+    
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', int(os.getenv("PORT", 8000)))
     await site.start()
+    
+    # Реєструємо вебхук у Монобанку при запуску
+    await setup_mono_webhook()
 
 load_dotenv()
 db = Database()
