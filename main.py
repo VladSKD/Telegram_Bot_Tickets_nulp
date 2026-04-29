@@ -235,11 +235,26 @@ async def process_institute(message: Message, state: FSMContext):
 async def process_group(message: Message, state: FSMContext):
     user_data = await state.get_data()
     group = message.text
+    
+    # 1. Зберігаємо в нашу основну базу даних (PostgreSQL)
     await db.register_full_user(
-        tg_id=message.from_user.id, username=message.from_user.username,
-        first_name=user_data['first_name'], last_name=user_data['last_name'],
-        institute=user_data['institute'], group=group
+        tg_id=message.from_user.id, 
+        username=message.from_user.username,
+        first_name=user_data['first_name'], 
+        last_name=user_data['last_name'],
+        institute=user_data['institute'], 
+        group=group
     )
+    
+    # 2. ДУБЛЮЄМО В ГУГЛ ТАБЛИЦЮ (прямо за твоїм посиланням)
+    asyncio.create_task(sheets.add_user_to_registry(
+        user_data['last_name'], 
+        user_data['first_name'], 
+        message.from_user.username,
+        user_data['institute'], 
+        group
+    ))
+    
     await message.answer(
         f"✅ <b>Реєстрація успішна, {user_data['first_name']}!</b>\n\n"
         "Тепер тобі доступний перегляд та купівля квитків. Обирай подію в меню нижче 👇", 

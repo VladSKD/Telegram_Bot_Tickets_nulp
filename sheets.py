@@ -85,3 +85,23 @@ def _mark_seat_as_cancelled(event_title, order_id, row_num, seat_num):
 
 async def cancel_seat_in_sheet(*args):
     await asyncio.to_thread(_mark_seat_as_cancelled, *args)
+    
+def _add_user_to_registry(last_name, first_name, username, institute, group):
+    try:
+        client = get_client()
+        if not client: return
+        
+        # Відкриваємо таблицю за твоїм посиланням
+        doc = client.open_by_url("https://docs.google.com/spreadsheets/d/1CYx4V7_p7keMeKUy2Q_5Rtzy8OuehsifceVTObFD5cQ/edit")
+        
+        # Беремо перший аркуш (Sheet1)
+        ws = doc.sheet1 
+        
+        # Додаємо рядок
+        ws.append_row([last_name, first_name, f"@{username}" if username else "-", institute, group])
+        print(f"✅ [SHEETS] Користувача {last_name} додано в загальну таблицю!")
+    except Exception as e:
+        print(f"❌ [SHEETS ERROR] Не вдалося записати юзера: {e}")
+
+async def add_user_to_registry(*args):
+    await asyncio.to_thread(_add_user_to_registry, *args)
