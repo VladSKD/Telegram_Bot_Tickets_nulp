@@ -197,3 +197,10 @@ class Database:
         WHERE event_id = $1 AND status = 'confirmed'
         """
         return await self.pool.fetch(query, event_id)
+    
+    async def attach_proof_to_order(self, order_id, file_id, f_type):
+        # Оновлюємо замовлення, додаючи файл і міняючи статус на "pending_manual"
+        await self.pool.execute(
+            "UPDATE orders SET file_id = $1, file_type = $2, status = 'pending_manual' WHERE id = $3",
+            file_id, f_type, order_id
+        )

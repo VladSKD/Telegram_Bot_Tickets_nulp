@@ -320,7 +320,7 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
         f_type = "organ_seats"
 
     if is_organ or event['is_free']:
-        # Записуємо в БД (тепер з місцями!)
+        # Записуємо в БД для безкоштовних/органного залу
         order_id = await db.add_order(message.from_user.id, event_id, qty, f_id, f_type)
         await db.update_order_status(order_id, "confirmed")
         
@@ -356,28 +356,47 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
         await state.clear()
     else:
         # ПЛАТНА ПОДІЯ...
-        # Беремо ціну з бази і переводимо в рядок на всякий випадок
+        # 1. Створюємо замовлення одразу, щоб отримати ID
+        order_id = await db.add_order(message.from_user.id, event_id, qty, f_id, f_type)
+        await db.update_order_status(order_id, "pending") # Статус: очікує оплати
+        
+        # 2. ЗАПИСУЄМО В GOOGLE ТАБЛИЦЮ ОДРАЗУ
+        status_str = "Очікує оплати"
+        await sheets.add_order_to_sheet(event['title'], order_id, user['last_name'], user['first_name'], username, user['institute'], user['student_group'], 1, status_str)
+        for friend_info in friends:
+            await sheets.add_order_to_sheet(event['title'], order_id, "Друг", friend_info, "-", "Гість", f"від @{username}", 1, status_str)
+
+        # 3. Формуємо код і рахуємо суму
+        payment_code = f"NULP-{order_id}"
         price_str = str(event['price']).strip()
         
         if price_str.isdigit():
-            # Якщо ціна складається ТІЛЬКИ з цифр (фіксована), рахуємо загальну суму
             total_price = int(price_str) * qty
-            text = (f"📝 <b>Твоє замовлення:</b> {qty} шт.\n"
-                    f"💳 <b>До оплати:</b> {total_price} грн <i>(по {price_str} грн/шт)</i>\n\n"
-                    f"🔗 <b>Банка:</b> {event['bank_link']}\n"
-                    f"🏦 <b>Картка:</b> <code>{event['card_number']}</code>\n\n"
-                    f"📸 <b>Наступний крок:</b>\nОплати та надішли сюди скріншот або PDF-квитанцію 👇")
+            price_display = f"{total_price} грн <i>(по {price_str} грн/шт)</i>"
         else:
-            # Якщо ціна містить текст ("Донат від 50 грн" тощо), просто виводимо текст
-            text = (f"📝 <b>Твоє замовлення:</b> {qty} шт.\n"
-                    f"💵 <b>Вартість:</b> {price_str}\n\n"
-                    f"⚠️ <i>Уважно розрахуй загальну суму та здійсни оплату!</i>\n\n"
-                    f"🔗 <b>Банка:</b> {event['bank_link']}\n"
-                    f"🏦 <b>Картка:</b> <code>{event['card_number']}</code>\n\n"
-                    f"📸 <b>Наступний крок:</b>\nНадішли скріншот або PDF-квитанцію 👇")
+            price_display = price_str
+
+        text = (
+            f"📝 <b>Твоє замовлення:</b> {qty} шт.\n"
+            f"💰 <b>До оплати:</b> {price_display}\n\n"
+            f"💳 <b>Реквізити:</b>\n"
+            f"🔗 Банка: {event['bank_link']}\n"
+            f"🏦 Картка: <code>{event['card_number']}</code>\n\n"
+            f"⚠️ <b>КРИТИЧНО ВАЖЛИВО:</b>\n"
+            f"В коментарі до платежу вкажи ТІЛЬКИ цей код:\n"
+            f"👉 <code>{payment_code}</code> 👈\n\n"
+            f"<i>Після оплати з кодом система сама видасть квиток протягом хвилини.</i>"
+        )
         
-        await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
-        await state.set_state(OrderState.waiting_for_proof)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📸 Я забув вказати код (надіслати скрін)", callback_data=f"forgot_{order_id}")]
+        ])
+        
+        await message.answer(text, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=True)
+        await state.clear()
+
+
+
 
 
 @dp.message(F.web_app_data)
@@ -501,30 +520,40 @@ async def process_friend_data(message: Message, state: FSMContext):
         await process_order_payment(message, state, is_organ)
 
 
+@dp.callback_query(F.data.startswith("forgot_"))
+async def forgot_code_handler(callback: CallbackQuery, state: FSMContext):
+    order_id = int(callback.data.split("_")[1])
+    await state.update_data(manual_order_id=order_id)
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer("Нічого страшного! Надішли сюди скріншот або PDF-квитанцію, і адмін підтвердить оплату вручну 👇")
+    await state.set_state(OrderState.waiting_for_proof)
+    
 @dp.message(OrderState.waiting_for_proof, F.photo | F.document)
 async def get_proof(message: Message, state: FSMContext):
     data = await state.get_data()
     f_id = message.photo[-1].file_id if message.photo else message.document.file_id
     f_type = "photo" if message.photo else "document"
     
-    qty = data['qty']
-    friends = data.get('friends', [])
-    
-    order_id = await db.add_order(message.from_user.id, data['ev_id'], qty, f_id, f_type)
+    order_id = data.get('manual_order_id')
+    if not order_id:
+        return await message.answer("⚠️ Помилка: замовлення не знайдено. Спробуй ще раз.")
+        
+    order = await db.get_order(order_id)
+    event = await db.get_event(order['event_id'])
     user = await db.get_user(message.from_user.id)
-    event = await db.get_event(data['ev_id'])
     username = user['username'] if user['username'] else "Без_юзернейму"
     
-    # Визначаємо, чи потрібне підтвердження (якщо колонка пуста - за замовчуванням True)
+    # 1. Беремо кількість квитків із бази даних
+    qty = order['ticket_count']
+
+    # Оновлюємо замовлення файлом
+    await db.attach_proof_to_order(order_id, f_id, f_type)
+    
     req_conf = event.get('requires_confirmation', True)
-    status_str = "Очікує" if req_conf else "Підтверджено"
+    status_str = "Очікує (Скріншот)" if req_conf else "Підтверджено"
     
-    # Запис покупця в таблицю
-    await sheets.add_order_to_sheet(event['title'], order_id, user['last_name'], user['first_name'], username, user['institute'], user['student_group'], 1, status_str)
-    
-    # Запис друзів
-    for friend_info in friends:
-        await sheets.add_order_to_sheet(event['title'], order_id, "Друг", friend_info, "-", "Гість", f"від @{username}", 1, status_str)
+    # 2. ОНОВЛЮЄМО статус у таблиці (замість створення нових рядків)
+    await sheets.update_payment_in_sheet(event['title'], order_id, status_str)
     
     caption = (
         f"🚨 Нова оплата #{order_id}!\n\n"
