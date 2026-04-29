@@ -24,73 +24,59 @@ async def handle(request):
 async def mono_webhook(request):
     try:
         data = await request.json()
-        print(f"🔥 [МОНОБАНК] ПРИЙШОВ ВЕБХУК: {data}")
-        
         if data.get("type") == "StatementItem":
             item = data["data"]["statementItem"]
-            
-            # --- ВИТЯГУЄМО ВСЕ МОЖЛИВЕ ---
             desc = item.get("description", "")
             comm = item.get("comment", "")
-            # Зліплюємо в один рядок і переводимо у верхній регістр
             full_text = f"{desc} {comm}".strip().upper()
             
-            amount = abs(item.get("amount", 0)) / 100 
-            
-            print(f"💰 [МОНОБАНК] Сума: {amount}, Шукаємо в: {full_text}")
+            incoming_amount = abs(item.get("amount", 0)) / 100 
             
             if "NULP-" in full_text:
-                import re
                 match = re.search(r'NULP-(\d+)', full_text)
                 if match:
                     order_id = int(match.group(1))
-                    print(f"🔍 [БОТ] Знайдено код NULP-{order_id}. Шукаю в базі...")
                     order = await db.get_order(order_id)
                     
-                    if order:
-                        print(f"📦 [БОТ] Замовлення знайдено! Статус: {order['status']}")
-                        if order['status'] != 'confirmed':
-                            event = await db.get_event(order['event_id'])
+                    if order and order['status'] != 'confirmed':
+                        event = await db.get_event(order['event_id'])
+                        
+                        # 1. Додаємо гроші до "скарбнички" замовлення
+                        await db.update_order_paid_amount(order_id, incoming_amount)
+                        
+                        # Отримуємо оновлені дані замовлення
+                        updated_order = await db.get_order(order_id)
+                        total_paid = updated_order.get('paid_amount', 0)
+                        
+                        # 2. Рахуємо, скільки мінімально треба
+                        min_unit_price = extract_min_price(event['price'])
+                        required_total = min_unit_price * order['ticket_count']
+                        
+                        if total_paid >= required_total:
+                            # ВСЕ ОК — ПІДТВЕРДЖУЄМО
+                            await db.update_order_status(order_id, "confirmed")
+                            await sheets.update_payment_in_sheet(event['title'], order_id, "Підтверджено (Авто)")
                             
-                            price_str = str(event['price']).strip()
-                            expected_total = int(price_str) * order['ticket_count'] if price_str.isdigit() else 0
-                            
-                            if not price_str.isdigit() or amount >= expected_total:
-                                print(f"✅ [БОТ] Сума сходиться! Підтверджую...")
-                                await db.update_order_status(order_id, "confirmed")
-                                await sheets.update_payment_in_sheet(event['title'], order_id, "Підтверджено (Авто)")
-                                
-                                await bot.send_message(
-                                    order['user_id'], 
-                                    f"✅ <b>Оплату знайдено!</b>\n\nСума: {amount} грн. Код: NULP-{order_id}\n\n📌 {event['success_message']}", 
-                                    parse_mode="HTML"
-                                )
-
-                                if order['file_type'] == 'organ_seats' and order['file_id']:
-                                    await bot.send_message(order['user_id'], "🎫 Твої офіційні квитки:")
-                                    seats = order['file_id'].split(',')
-                                    for s_info in seats:
-                                        row, seat = s_info.split('-')
-                                        ticket = await db.get_seat_ticket(order['event_id'], row, seat)
-                                        if ticket:
-                                            caption = f"🎟 Ряд {row}, Місце {seat}"
-                                            if ticket['file_type'] == 'photo':
-                                                await bot.send_photo(order['user_id'], ticket['file_id'], caption=caption)
-                                            else:
-                                                await bot.send_document(order['user_id'], ticket['file_id'], caption=caption)
-                                        else:
-                                            await bot.send_message(order['user_id'], f"⚠️ Квиток для Ряду {row}, Місця {seat} ще не завантажений адміном.")
-                            else:
-                                print(f"❌ [БОТ] Сума не сходиться! Очікувалось {expected_total}, прийшло {amount}")
+                            msg = (f"✅ <b>Оплату отримано повністю!</b>\n\n"
+                                   f"💰 Всього сплачено: {total_paid} грн.\n"
+                                   f"📌 {event['success_message']}")
+                            await bot.send_message(order['user_id'], msg, parse_mode="HTML")
+                            # Тут можна додати логіку видачі квитків органного залу...
                         else:
-                            print(f"⚠️ [БОТ] Замовлення вже було підтверджено раніше.")
-                    else:
-                        print(f"❌ [БОТ] Замовлення з ID {order_id} не знайдено в базі!")
-            else:
-                print(f"⚠️ [БОТ] У коментарі немає слова 'NULP-'")
-                
+                            # НЕДОПЛАТА
+                            difference = required_total - total_paid
+                            msg = (f"⚠️ <b>Недостатня сума для квитків!</b>\n\n"
+                                   f"📥 Отримано зараз: {incoming_amount} грн\n"
+                                   f"💰 Всього сплачено: {total_paid} грн\n"
+                                   f"❌ <b>Потрібно ще: {difference} грн</b>\n\n"
+                                   f"Будь ласка, доплати різницю на ту саму Банку, <u>обов'язково</u> вказавши той самий код: <code>NULP-{order_id}</code>")
+                            await bot.send_message(order['user_id'], msg, parse_mode="HTML")
+                            
+                            # Оновлюємо статус в таблиці, щоб адмін бачив недоплату
+                            await sheets.update_payment_in_sheet(event['title'], order_id, f"Недоплата (є {total_paid} з {required_total})")
+
     except Exception as e:
-        print(f"❌ [ПОМИЛКА ВЕБХУКУ]: {e}")
+        print(f"❌ Помилка: {e}")
         
     return web.Response(text="OK", status=200)
 
@@ -124,6 +110,15 @@ async def start_webhook():
     
     # Реєструємо вебхук у Монобанку при запуску
     await setup_mono_webhook()
+
+
+def extract_min_price(price_str):
+    """Витягує перше число з рядка. Якщо там просто '150', поверне 150."""
+    price_str = str(price_str).strip()
+    if price_str.isdigit():
+        return int(price_str)
+    match = re.search(r'\d+', price_str)
+    return int(match.group()) if match else 0
 
 load_dotenv()
 db = Database()
@@ -379,37 +374,30 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
             
         await state.clear()
     else:
-        # ПЛАТНА ПОДІЯ...
-        # 1. Створюємо замовлення одразу, щоб отримати ID
         order_id = await db.add_order(message.from_user.id, event_id, qty, f_id, f_type)
-        await db.update_order_status(order_id, "pending") # Статус: очікує оплати
+        await db.update_order_status(order_id, "pending")
         
-        # 2. ЗАПИСУЄМО В GOOGLE ТАБЛИЦЮ ОДРАЗУ
-        status_str = "Очікує оплати"
-        await sheets.add_order_to_sheet(event['title'], order_id, user['last_name'], user['first_name'], username, user['institute'], user['student_group'], 1, status_str)
-        for friend_info in friends:
-            await sheets.add_order_to_sheet(event['title'], order_id, "Друг", friend_info, "-", "Гість", f"від @{username}", 1, status_str)
-
-        # 3. Формуємо код і рахуємо суму
-        payment_code = f"NULP-{order_id}"
         price_str = str(event['price']).strip()
+        min_unit_price = extract_min_price(price_str)
+        total_required = min_unit_price * qty
+        
+        payment_code = f"NULP-{order_id}"
         
         if price_str.isdigit():
-            total_price = int(price_str) * qty
-            price_display = f"{total_price} грн <i>(по {price_str} грн/шт)</i>"
+            price_display = f"💳 <b>Сума до оплати:</b> {total_required} грн (по {price_str} грн/шт)"
         else:
-            price_display = price_str
+            price_display = (f"💵 <b>Умова:</b> {price_str} за один квиток.\n"
+                             f"📈 <b>Разом за {qty} шт:</b> від {total_required} грн")
 
         text = (
             f"📝 <b>Твоє замовлення:</b> {qty} шт.\n"
-            f"💰 <b>До оплати:</b> {price_display}\n\n"
+            f"{price_display}\n\n"
             f"💳 <b>Реквізити:</b>\n"
             f"🔗 Банка: {event['bank_link']}\n"
             f"🏦 Картка: <code>{event['card_number']}</code>\n\n"
-            f"⚠️ <b>КРИТИЧНО ВАЖЛИВО:</b>\n"
-            f"В коментарі до платежу вкажи ТІЛЬКИ цей код:\n"
+            f"⚠️ <b>ОБОВ'ЯЗКОВО вкажи код у коментарі:</b>\n"
             f"👉 <code>{payment_code}</code> 👈\n\n"
-            f"<i>Після оплати з кодом система сама видасть квиток протягом хвилини.</i>"
+            f"<i>Бот автоматично підсумує всі твої платежі з цим кодом.</i>"
         )
         
         kb = InlineKeyboardMarkup(inline_keyboard=[

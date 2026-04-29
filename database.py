@@ -33,6 +33,19 @@ class Database:
             await self.pool.execute("ALTER TABLE events ADD COLUMN requires_confirmation BOOLEAN DEFAULT TRUE;")
         except Exception:
             pass # Якщо колонка вже є, ігноруємо помилку
+        
+        try:
+            await self.pool.execute("ALTER TABLE orders ADD COLUMN paid_amount INT DEFAULT 0;")
+        except Exception:
+            pass # Колонка вже є
+
+    async def update_order_paid_amount(self, order_id, amount_uah):
+        # amount_uah — сума в гривнях, яку ми додаємо до існуючої
+        await self.pool.execute(
+            "UPDATE orders SET paid_amount = paid_amount + $1 WHERE id = $2",
+            int(amount_uah), order_id
+        )
+
 
     # --- ЧОРНИЙ СПИСОК ---
     async def add_to_blacklist(self, username: str):
