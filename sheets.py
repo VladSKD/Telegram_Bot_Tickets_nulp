@@ -1,3 +1,5 @@
+import re
+
 import gspread
 from google.oauth2.service_account import Credentials
 import asyncio
@@ -73,25 +75,26 @@ def _get_or_create_worksheet(event_title):
         return None
 
 # --- СИНХРОНІЗАЦІЯ КОЛЬОРІВ ---
-def _get_occupied_from_sheet(event_title):
+def _get_occupied_from_sheet(event_title, venue_type):
     client = get_client()
     if not client: return []
     try:
-        is_gala = "Гала" in event_title or "Весна" in event_title
-        url = os.getenv("SPREADSHEET_GALA_URL") if is_gala else os.getenv("SPREADSHEET_ORGAN_URL")
+        # Вибираємо URL ТІЛЬКИ за типом залу з бази даних
+        if venue_type == 'assembly_hall':
+            url = os.getenv("SPREADSHEET_GALA_URL")
+            sheet_name = "РОЗСАДКА"
+        else:
+            url = os.getenv("SPREADSHEET_ORGAN_URL")
+            sheet_name = "Схема залу"
+            
         doc = client.open_by_url(url)
+        ws = doc.worksheet(sheet_name) # Тепер помилки не буде!
         
-        # 🎯 ВИПРАВЛЕНО: Бот більше не шукає "Схему залу" там, де її немає
-        sheet_name = "РОЗСАДКА" if is_gala else "Схема залу"
-        ws = doc.worksheet(sheet_name)
-        
-        # Отримуємо кольори
         all_cells = ws.get_all_cells(get_metadata=True)
         occupied = []
         for r_idx, row_data in enumerate(all_cells, 1):
             for c_idx, cell in enumerate(row_data, 1):
                 bg = cell.get('userEnteredFormat', {}).get('backgroundColor', {})
-                # Якщо клітинка кольорова — вважаємо зайнятою
                 if bg and (bg.get('red', 1) < 1 or bg.get('green', 1) < 1 or bg.get('blue', 1) < 1):
                     seat_id = translate_coords_to_id(r_idx, c_idx)
                     if seat_id: occupied.append(seat_id)
@@ -100,8 +103,9 @@ def _get_occupied_from_sheet(event_title):
         print(f"❌ [SHEETS ERROR] Помилка читання кольорів: {e}")
         return []
 
-async def get_occupied_from_sheet(event_title):
-    return await asyncio.to_thread(_get_occupied_from_sheet, event_title)
+# Не забудь оновити і цю обгортку
+async def get_occupied_from_sheet(event_title, venue_type):
+    return await asyncio.to_thread(_get_occupied_from_sheet, event_title, venue_type)
 
 # --- ЗАПИС ЗАМОВЛЕНЬ ---
 def _add_order(event_title, order_id, last_name, first_name, username, institute, group, qty, status):
