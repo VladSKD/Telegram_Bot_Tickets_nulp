@@ -1,7 +1,8 @@
 import asyncpg
 import os
 from dotenv import load_dotenv
-
+import sheets  # Перевір, чи є цей рядок на самому початку!
+import asyncio
 import sheets
 
 load_dotenv()
@@ -162,15 +163,7 @@ class Database:
         return await self.pool.fetchrow("SELECT * FROM orders WHERE id = $1", order_id)
     
     # --- НОВА ФУНКЦІЯ ДЛЯ МІСЦЬ ---
-    async def get_occupied_seats(self, event_id):
-        # Дістаємо всі збережені місця для конкретної події
-        query = "SELECT file_id FROM orders WHERE event_id = $1 AND file_type = 'organ_seats' AND status = 'confirmed'"
-        rows = await self.pool.fetch(query, event_id)
-        seats = []
-        for row in rows:
-            if row['file_id']:
-                seats.extend(row['file_id'].split(','))
-        return seats
+    
     
     async def get_seat_info(self, event_id, row, seat):
         query = """

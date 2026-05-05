@@ -137,43 +137,8 @@ def _upsert_user_in_registry(last_name, first_name, username, institute, group):
 async def upsert_user_in_registry(*args):
     await asyncio.to_thread(_upsert_user_in_registry, *args)
     
-def _get_occupied_from_sheet(event_title):
-    client = get_client()
-    if not client: return []
-    try:
-        # Використовуємо ту саму логіку вибору URL
-        url = os.getenv("SPREADSHEET_GALA_URL") if "Гала" in event_title else os.getenv("SPREADSHEET_ORGAN_URL")
-        doc = client.open_by_url(url)
-        
-        # Для Гали шукаємо вкладку "Схема залу"
-        ws = doc.worksheet("Схема залу")
-        
-        all_cells = ws.get_all_cells(get_metadata=True)
-        
-        # Отримуємо всі формати клітинок (кольори) одним запитом
-        # Це важливо для швидкодії, щоб не смикати API для кожної клітинки
-        all_formats = ws.get_all_cells(get_metadata=True)
-        
-        occupied = []
-        
-        # Співвідношення координат Google Таблиці до твоїх Секторів
-        # (Це приклад логіки, її треба підправити під точні стовпці твого Excel)
-        for row_idx, row_data in enumerate(all_formats):
-            for col_idx, cell in enumerate(row_data):
-                color = cell.get('userEnteredFormat', {}).get('backgroundColor', {})
-                
-                # Якщо клітинка не біла (R:1, G:1, B:1) — вона зайнята
-                if color and (color.get('red', 1) < 1 or color.get('green', 1) < 1 or color.get('blue', 1) < 1):
-                    # Логіка визначення місця за координатами (row_idx, col_idx)
-                    # Наприклад, якщо це Сектор B:
-                    seat_id = translate_coords_to_id(row_idx, col_idx)
-                    if seat_id:
-                        occupied.append(seat_id)
-        
-        return occupied
-    except Exception as e:
-        print(f"❌ [SHEETS ERROR] Помилка читання кольорів: {e}")
-        return []
+
+   
 
 SECTOR_MAP = {
     'A': {'c_start': 18, 'c_end': 25, 'r_start': 10, 'r_end': 31, 'h_off': 8},   # R-Y
@@ -217,31 +182,40 @@ def translate_coords_to_id(row, col):
 
     return None
 
+
 def _get_occupied_from_sheet(event_title):
     client = get_client()
-    if not client: return []
+    if not client: 
+        return []
     try:
-        doc = client.open_by_url(os.getenv("SPREADSHEET_URL"))
+        # Обираємо таблицю залежно від івенту
+        url = os.getenv("SPREADSHEET_GALA_URL") if ("Гала" in event_title or "Весна" in event_title) else os.getenv("SPREADSHEET_ORGAN_URL")
+        doc = client.open_by_url(url)
         ws = doc.worksheet("Схема залу")
         
-        # Отримуємо всі клітинки з інформацією про формат
+        # Отримуємо всі клітинки з метаданими кольорів
+        # enumerate(..., 1) важливо для відповідності координатам (R10, AA10 тощо)
         all_cells = ws.get_all_cells(get_metadata=True)
         occupied = []
         
-        for r_idx, row_cells in enumerate(all_cells, 1):
-            for c_idx, cell in enumerate(row_cells, 1):
+        for r_idx, row_data in enumerate(all_cells, 1):
+            for c_idx, cell in enumerate(row_data, 1):
                 fmt = cell.get('userEnteredFormat', {})
                 bg = fmt.get('backgroundColor', {})
                 
-                # Перевіряємо, чи колір НЕ білий (якщо R, G або B < 1)
+                # Якщо колір не білий (хоча б один канал < 1) — місце зайняте
                 if bg and (bg.get('red', 1) < 1 or bg.get('green', 1) < 1 or bg.get('blue', 1) < 1):
                     seat_id = translate_coords_to_id(r_idx, c_idx)
                     if seat_id:
                         occupied.append(seat_id)
         return occupied
     except Exception as e:
-        print(f"❌ Помилка синхронізації кольорів: {e}")
+        print(f"❌ [SHEETS ERROR] Помилка читання кольорів: {e}")
         return []
+
+# Саме цю функцію викликає database_2.py
+async def get_occupied_from_sheet(event_title):
+    return await asyncio.to_thread(_get_occupied_from_sheet, event_title)
     
 def _add_order(event_title, order_id, user_info, seat_id, status):
     """

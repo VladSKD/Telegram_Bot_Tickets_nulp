@@ -377,7 +377,7 @@ async def start_buy(callback: CallbackQuery, state: FSMContext):
         
         # Визначаємо посилання залежно від залу
         # Якщо ти захостив Актову залу на іншому посиланні: telegram-bot-tickets-nulp-gwfu.vercel.app
-        base_url = "telegram-bot-tickets-nulp-gwfu.vercel.app" if event['venue_type'] == 'assembly_hall' else "https://telegram-bot-tickets-nulp.vercel.app"
+        base_url = "https://telegram-bot-tickets-nulp-gwfu.vercel.app" if event['venue_type'] == 'assembly_hall' else "https://telegram-bot-tickets-nulp.vercel.app"
         
         web_app_url = f"{base_url}/?occ={occ_str}&t={int(time.time())}"
         
