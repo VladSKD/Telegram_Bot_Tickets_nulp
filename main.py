@@ -371,18 +371,22 @@ async def start_buy(callback: CallbackQuery, state: FSMContext):
     await state.update_data(ev_id=event_id)
     event = await db.get_event(event_id)
     
-    if event.get('venue_type') == 'organ_hall':
+    if event.get('venue_type') in ['organ_hall', 'assembly_hall']:
         occ_list = await db.get_occupied_seats(event_id)
         occ_str = ",".join(occ_list)
         
-        web_app_url = f"https://telegram-bot-tickets-nulp.vercel.app/?occ={occ_str}&t={int(time.time())}"
+        # Визначаємо посилання залежно від залу
+        # Якщо ти захостив Актову залу на іншому посиланні: telegram-bot-tickets-nulp-gwfu.vercel.app
+        base_url = "telegram-bot-tickets-nulp-gwfu.vercel.app" if event['venue_type'] == 'assembly_hall' else "https://telegram-bot-tickets-nulp.vercel.app"
+        
+        web_app_url = f"{base_url}/?occ={occ_str}&t={int(time.time())}"
         
         kb = ReplyKeyboardMarkup(
             keyboard=[[KeyboardButton(text="🗺 Відкрити схему залу", web_app=WebAppInfo(url=web_app_url))]],
             resize_keyboard=True,
             one_time_keyboard=True
         )
-        await callback.message.answer("Обери бажані місця на інтерактивній схемі залу (натисни кнопку внизу екрану 👇)", reply_markup=kb)
+        await callback.message.answer("Обери бажані місця на інтерактивній схемі 👇", reply_markup=kb)
     else:
         await callback.message.answer("🛒 <b>Скільки квитків беремо?</b>\n<i>Напиши просто число (наприклад: 1, 2):</i>", parse_mode="HTML")
         await state.set_state(OrderState.waiting_for_quantity)
@@ -762,7 +766,8 @@ async def add_ev_desc(message: Message, state: FSMContext):
 async def add_ev_dt(message: Message, state: FSMContext):
     await state.update_data(dt=message.text)
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎹 Органний зал (з вибором місць)", callback_data="venue_organ_hall")],
+        [InlineKeyboardButton(text="🎹 Органний зал", callback_data="venue_organ_hall")],
+        [InlineKeyboardButton(text="🏛 Актова зала (NEW)", callback_data="venue_assembly_hall")], # Додаємо це
         [InlineKeyboardButton(text="🏢 Інше / Немає значення", callback_data="venue_other")]
     ])
     await message.answer("Обери тип локації:", reply_markup=kb)
@@ -1173,21 +1178,23 @@ async def admin_manage_hall_list(callback: CallbackQuery):
     ])
     await callback.message.edit_text("Обери подію для перегляду карти:", reply_markup=kb)
 
-@dp.callback_query(F.data.startswith("adm_hall_"))
+dp.callback_query(F.data.startswith("adm_hall_"))
 async def open_admin_hall(callback: CallbackQuery):
     event_id = int(callback.data.split("_")[2])
+    event = await db.get_event(event_id) # Отримуємо подію, щоб знати тип залу
     occ_list = await db.get_occupied_seats(event_id)
     occ_str = ",".join(occ_list)
     
-    # ПЕРЕДАЄМО admin=true ТА ev_id В URL!
-    web_app_url = f"https://telegram-bot-tickets-nulp.vercel.app/?occ={occ_str}&admin=true&ev_id={event_id}&t={int(time.time())}"
+    base_url = "telegram-bot-tickets-nulp-gwfu.vercel.app" if event['venue_type'] == 'assembly_hall' else "https://telegram-bot-tickets-nulp.vercel.app"
+    
+    web_app_url = f"{base_url}/?occ={occ_str}&admin=true&ev_id={event_id}&t={int(time.time())}"
     
     kb = ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="🛠 Відкрити карту (Адмін)", web_app=WebAppInfo(url=web_app_url))]],
         resize_keyboard=True,
         one_time_keyboard=True
     )
-    await callback.message.answer("Карта для адміністрування готова 👇", reply_markup=kb)
+    await callback.message.answer(f"Карта для {event['title']} готова 👇", reply_markup=kb)
 
 # У main.py знайди perform_adm_cancel і онови її:
 
