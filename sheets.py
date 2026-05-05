@@ -25,15 +25,28 @@ def get_client():
 
 def _get_or_create_worksheet(event_title):
     client = get_client()
-    if not client: return None
+    if not client: 
+        return None
     
     try:
-        doc = client.open_by_url(os.getenv("SPREADSHEET_URL"))
+        # Логіка вибору таблиці залежно від назви події
+        if "Гала" in event_title or "Весна" in event_title:
+            url = os.getenv("SPREADSHEET_GALA_URL")
+        else:
+            url = os.getenv("SPREADSHEET_ORGAN_URL")
+            
+        doc = client.open_by_url(url)
+        
         try:
             worksheet = doc.worksheet(event_title)
         except gspread.exceptions.WorksheetNotFound:
-            worksheet = doc.add_worksheet(title=event_title, rows="1000", cols="8")
-            worksheet.append_row(["ID Замовлення", "Прізвище", "Ім'я", "Telegram", "Інститут", "Група", "К-сть квитків", "Статус"])
+            # Створюємо нову вкладку для конкретного івенту, якщо її немає
+            # Додаємо 10 стовпців (з урахуванням "Інституту" для балів)
+            worksheet = doc.add_worksheet(title=event_title, rows="1000", cols="10")
+            worksheet.append_row([
+                "ID Замовлення", "Прізвище", "Ім'я", "Telegram", 
+                "Інститут", "Сектор", "Ряд", "Місце", "Статус", "Квиток забрано"
+            ])
         return worksheet
     except Exception as e:
         print(f"❌ [SHEETS ERROR] Не вдалося відкрити таблицю: {e}")
@@ -125,14 +138,17 @@ async def upsert_user_in_registry(*args):
     await asyncio.to_thread(_upsert_user_in_registry, *args)
     
 def _get_occupied_from_sheet(event_title):
-    """Зчитує кольори клітинок і повертає список зайнятих місць"""
     client = get_client()
     if not client: return []
-    
     try:
-        doc = client.open_by_url(os.getenv("SPREADSHEET_URL"))
-        # Відкриваємо вкладку "Схема", яку ти показував на скрінах
-        ws = doc.worksheet("РОЗСАДКА") 
+        # Використовуємо ту саму логіку вибору URL
+        url = os.getenv("SPREADSHEET_GALA_URL") if "Гала" in event_title else os.getenv("SPREADSHEET_ORGAN_URL")
+        doc = client.open_by_url(url)
+        
+        # Для Гали шукаємо вкладку "Схема залу"
+        ws = doc.worksheet("Схема залу")
+        
+        all_cells = ws.get_all_cells(get_metadata=True)
         
         # Отримуємо всі формати клітинок (кольори) одним запитом
         # Це важливо для швидкодії, щоб не смикати API для кожної клітинки
