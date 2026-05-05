@@ -3,6 +3,11 @@ from google.oauth2.service_account import Credentials
 import asyncio
 import os
 import json
+import gspread
+from google.oauth2.service_account import Credentials
+import os, json, asyncio
+
+
 
 def get_client():
     try:
@@ -118,3 +123,123 @@ def _upsert_user_in_registry(last_name, first_name, username, institute, group):
 
 async def upsert_user_in_registry(*args):
     await asyncio.to_thread(_upsert_user_in_registry, *args)
+    
+def _get_occupied_from_sheet(event_title):
+    """Зчитує кольори клітинок і повертає список зайнятих місць"""
+    client = get_client()
+    if not client: return []
+    
+    try:
+        doc = client.open_by_url(os.getenv("SPREADSHEET_URL"))
+        # Відкриваємо вкладку "Схема", яку ти показував на скрінах
+        ws = doc.worksheet("РОЗСАДКА") 
+        
+        # Отримуємо всі формати клітинок (кольори) одним запитом
+        # Це важливо для швидкодії, щоб не смикати API для кожної клітинки
+        all_formats = ws.get_all_cells(get_metadata=True)
+        
+        occupied = []
+        
+        # Співвідношення координат Google Таблиці до твоїх Секторів
+        # (Це приклад логіки, її треба підправити під точні стовпці твого Excel)
+        for row_idx, row_data in enumerate(all_formats):
+            for col_idx, cell in enumerate(row_data):
+                color = cell.get('userEnteredFormat', {}).get('backgroundColor', {})
+                
+                # Якщо клітинка не біла (R:1, G:1, B:1) — вона зайнята
+                if color and (color.get('red', 1) < 1 or color.get('green', 1) < 1 or color.get('blue', 1) < 1):
+                    # Логіка визначення місця за координатами (row_idx, col_idx)
+                    # Наприклад, якщо це Сектор B:
+                    seat_id = translate_coords_to_id(row_idx, col_idx)
+                    if seat_id:
+                        occupied.append(seat_id)
+        
+        return occupied
+    except Exception as e:
+        print(f"❌ [SHEETS ERROR] Помилка читання кольорів: {e}")
+        return []
+
+SECTOR_MAP = {
+    'A': {'c_start': 18, 'c_end': 25, 'r_start': 10, 'r_end': 31, 'h_off': 8},   # R-Y
+    'B': {'c_start': 27, 'c_end': 34, 'r_start': 10, 'r_end': 31, 'h_off': 8},   # AA-AH
+    'C': {'c_start': 36, 'c_end': 43, 'r_start': 10, 'r_end': 31, 'h_off': 8},   # AJ-AQ
+    'D_row24': {'c_start': 18, 'c_end': 43, 'r_start': 36, 'r_end': 36},         # R-AQ (Row 36)
+    'D_main':  {'c_start': 21, 'c_end': 40, 'r_start': 37, 'r_end': 40, 'h_off': 12}, # U-AN (Row 37-40)
+    'Balcony_main': {'c_start': 14, 'c_end': 39, 'r_start': 53, 'r_end': 58, 'h_off': 52}, # N-AM
+    'Balcony_L': {'c_start': 6, 'c_end': 8, 'r_start': 31, 'r_end': 48, 'h_off': 30},   # F-H
+    'Balcony_R': {'c_start': 52, 'c_end': 54, 'r_start': 31, 'r_end': 49, 'h_off': 30}   # AZ-BB
+}
+
+def translate_coords_to_id(row, col):
+    """Перетворює Excel Row/Col у формат ID: Zone-Row-Seat"""
+    # Сектори A, B, C
+    for zone in ['A', 'B', 'C']:
+        m = SECTOR_MAP[zone]
+        if m['r_start'] <= row <= m['r_end'] and m['c_start'] <= col <= m['c_end']:
+            return f"{zone}-{row - m['h_off']}-{col - (m['c_start'] - 1)}"
+
+    # Сектор D (Ряд 24)
+    m = SECTOR_MAP['D_row24']
+    if row == m['r_start'] and m['c_start'] <= col <= m['c_end']:
+        return f"D-24-{col - 17}"
+
+    # Сектор D (Ряди 25-28)
+    m = SECTOR_MAP['D_main']
+    if m['r_start'] <= row <= m['r_end'] and m['c_start'] <= col <= m['c_end']:
+        return f"D-{row - m['h_off']}-{col - 20}"
+
+    # Бічні балкони
+    if SECTOR_MAP['Balcony_L']['r_start'] <= row <= SECTOR_MAP['Balcony_L']['r_end'] and 6 <= col <= 8:
+        return f"ЛБ-{row - 30}-{col - 5}"
+    if SECTOR_MAP['Balcony_R']['r_start'] <= row <= SECTOR_MAP['Balcony_R']['r_end'] and 52 <= col <= 54:
+        return f"ПБ-{row - 30}-{col - 51}"
+
+    # Головний балкон
+    m = SECTOR_MAP['Balcony_main']
+    if m['r_start'] <= row <= m['r_end'] and m['c_start'] <= col <= m['c_end']:
+        return f"Балкон-{row - m['h_off']}-{col - 13}"
+
+    return None
+
+def _get_occupied_from_sheet(event_title):
+    client = get_client()
+    if not client: return []
+    try:
+        doc = client.open_by_url(os.getenv("SPREADSHEET_URL"))
+        ws = doc.worksheet("Схема залу")
+        
+        # Отримуємо всі клітинки з інформацією про формат
+        all_cells = ws.get_all_cells(get_metadata=True)
+        occupied = []
+        
+        for r_idx, row_cells in enumerate(all_cells, 1):
+            for c_idx, cell in enumerate(row_cells, 1):
+                fmt = cell.get('userEnteredFormat', {})
+                bg = fmt.get('backgroundColor', {})
+                
+                # Перевіряємо, чи колір НЕ білий (якщо R, G або B < 1)
+                if bg and (bg.get('red', 1) < 1 or bg.get('green', 1) < 1 or bg.get('blue', 1) < 1):
+                    seat_id = translate_coords_to_id(r_idx, c_idx)
+                    if seat_id:
+                        occupied.append(seat_id)
+        return occupied
+    except Exception as e:
+        print(f"❌ Помилка синхронізації кольорів: {e}")
+        return []
+    
+def _add_order(event_title, order_id, user_info, seat_id, status):
+    """
+    seat_id приходить у форматі "A-2-5"
+    """
+    try:
+        ws = _get_or_create_worksheet(event_title) # Вкладка з назвою івенту
+        zone, row, seat = seat_id.split('-')
+        
+        # ID, Прізвище, Ім'я, ТГ, Сектор, Ряд, Місце, Статус, Забрав квиток
+        row_data = [
+            order_id, user_info['last_name'], user_info['first_name'],
+            f"@{user_info['username']}", zone, row, seat, status, "Ні"
+        ]
+        ws.append_row(row_data)
+    except Exception as e:
+        print(f"❌ Помилка запису в таблицю замовлень: {e}")

@@ -1,0 +1,219 @@
+/* src/App.css */
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #f4f7f6;
+  color: #2d3748;
+  font-family: 'Inter', sans-serif;
+}
+
+.hall-wrapper {
+  background-color: #ffffff;
+  border-radius: 24px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+  padding: 20px 10px;
+  margin: 10px auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 100%;
+}
+
+h2 {
+  margin-top: 0;
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: #1a202c;
+  margin-bottom: 15px;
+}
+
+/* Контейнер для горизонтального скролу на мобілках */
+.scroll-container {
+  width: 100%;
+  overflow-x: auto;
+  padding-bottom: 20px;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Сама карта залу має фіксовану мінімальну ширину, щоб ряди не ламалися */
+.hall-map {
+  min-width: 950px; 
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 20px;
+}
+
+.zone-title {
+  font-size: 14px;
+  font-weight: 800;
+  color: #4a5568;
+  letter-spacing: 2px;
+  margin: 20px 0 10px;
+  text-align: center;
+  background: #edf2f7;
+  padding: 5px 20px;
+  border-radius: 12px;
+}
+
+.zone-title.small {
+  font-size: 11px;
+}
+
+.row-wrapper {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.row-label {
+  width: 25px;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  color: #a0aec0;
+}
+
+.seats-group {
+  display: flex;
+  gap: 4px;
+}
+
+.seats-group.justify-center {
+  justify-content: center;
+}
+
+.aisle-spacer {
+  width: 30px; /* Проходи між секторами A, B, C */
+}
+
+/* СЕКЦІЯ БАЛКОНІВ */
+.balconies-section {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  margin-top: 40px;
+  gap: 30px;
+}
+
+.side-balcony {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.main-balcony {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-grow: 1;
+}
+
+/* ДИЗАЙН КРІСЕЛ */
+.seat {
+  width: 22px; /* Зробили трохи меншими, щоб влізло */
+  height: 22px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: all 0.2s ease;
+}
+
+.seat.available {
+  background-color: #edf7ed;
+  border: 1px solid #a5d6a7;
+  color: #388e3c;
+}
+
+.seat.available:hover {
+  background-color: #c8e6c9;
+  transform: translateY(-1px);
+}
+
+.seat.occupied {
+  background-color: #fdecea;
+  border: 1px solid #ffcdd2;
+  color: #d32f2f;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.seat.selected {
+  background-color: #3182ce;
+  border: 1px solid #2b6cb0;
+  color: #ffffff;
+  transform: scale(1.1);
+}
+
+/* СЦЕНА */
+.stage-container {
+  margin-bottom: 20px;
+  width: 600px;
+}
+
+.stage {
+  background: linear-gradient(135deg, #4a5568 0%, #2d3748 100%);
+  border-radius: 12px;
+  padding: 15px;
+  font-weight: 800;
+  font-size: 18px;
+  letter-spacing: 5px;
+  color: #ffffff;
+  text-align: center;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+
+/* ЛЕГЕНДА */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 15px;
+  margin-top: 20px;
+  padding: 15px;
+  background-color: #f7fafc;
+  border-radius: 12px;
+  width: 90%;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4a5568;
+}
+
+.legend-dot {
+  width: 16px;
+  height: 16px;
+  cursor: default;
+}
+.legend-dot:hover { transform: none; }
+
+/* АДМІН РЕЖИМ */
+.admin-mode .seat.available {
+  opacity: 0.2;
+  cursor: not-allowed;
+}
+.admin-mode .seat.occupied {
+  cursor: pointer;
+  opacity: 1;
+  border: 2px solid #c53030;
+}
+.admin-mode .seat.occupied:hover {
+  transform: scale(1.15);
+}
+.admin-mode .seat.occupied.selected {
+  border: 3px solid #2196F3 !important;
+  transform: scale(1.1);
+}

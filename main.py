@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timedelta
 import os
 import time
 import re
@@ -483,21 +484,58 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
 
 
 
+async def check_expired_bookings():
+    """Фонова задача для скасування старих броней"""
+    while True:
+        try:
+            # Отримуємо замовлення, які в статусі 'pending' більше 10 хвилин
+            # (Для цього треба додати колонку created_at у таблицю orders)
+            expired_orders = await db.pool.fetch(
+                "SELECT id, event_id, file_id FROM orders WHERE status = 'pending' AND created_at < $1",
+                datetime.now() - timedelta(minutes=10)
+            )
+            
+            for order in expired_orders:
+                # 1. Скасовуємо в БД
+                await db.update_order_status(order['id'], 'cancelled')
+                
+                # 2. Отримуємо інфу про подію для Google Sheets
+                event = await db.get_event(order['event_id'])
+                
+                # 3. Видаляємо позначку в таблиці (якщо ти робив запис текстом)
+                if order['file_id']:
+                    for seat in order['file_id'].split(','):
+                        # Логіка очищення клітинки в Excel (опціонально)
+                        pass
+                
+                print(f"⏰ Бронь замовлення #{order['id']} скасована за таймаутом.")
+                
+        except Exception as e:
+            print(f"❌ Помилка в таймері броней: {e}")
+            
+        await asyncio.sleep(60) # Перевірка щохвилини
 
 
 @dp.message(F.web_app_data)
 async def handle_web_app_data(message: Message, state: FSMContext):
     await message.answer("🔄 Обробляю твій вибір...", reply_markup=main_kb(message.from_user.id))
     raw_data = message.web_app_data.data
-    
-    # 🌟 ЯКЩО ЦЕ АДМІН ВІДПРАВИВ ЗАПИТ НА ІНФУ ПРО МІСЦЕ:
+
+    # 1. Перевірка на порожні дані
+    if not raw_data or raw_data == "null":
+        return await message.answer("⚠️ Помилка: Дані не отримано.", parse_mode="HTML")
+
+    # 🌟 ЛОГІКА АДМІНА
     if raw_data.startswith("admin_seat|"):
-        _, ev_id_str, seat_str = raw_data.split("|")
-        row, seat = seat_str.split('-')
+        # Формат: admin_seat|event_id|Зона-Ряд-Місце
+        _, ev_id_str, full_id = raw_data.split("|")
+        # Розбиваємо новий ID (Зона-Ряд-Місце)
+        id_parts = full_id.split('-')
+        zone, row, seat = id_parts[0], id_parts[1], id_parts[2]
         
-        info = await db.get_seat_info(int(ev_id_str), row, seat)
+        info = await db.get_seat_info(int(ev_id_str), row, seat) # Тут логіка залежить від твоєї БД
         if not info:
-            return await message.answer(f"ℹ️ Місце {row}-{seat} не знайдено або вже вільне.")
+            return await message.answer(f"ℹ️ Місце {full_id} не знайдено або вже вільне.")
             
         event = await db.get_event(int(ev_id_str))
         username = f"@{info['username']}" if info['username'] else "Без юзернейму"
@@ -505,57 +543,57 @@ async def handle_web_app_data(message: Message, state: FSMContext):
         text = (
             f"🛠 <b>Деталі квитка</b>\n\n"
             f"🎫 <b>Подія:</b> {event['title']}\n"
-            f"📍 <b>Місце:</b> Ряд {row}, Місце {seat}\n\n"
+            f"📍 <b>Місце:</b> {zone}, Ряд {row}, Місце {seat}\n\n"
             f"👤 <b>Покупець:</b> {info['first_name']} {info['last_name']} ({username})\n"
-            f"🎓 <b>Група:</b> {info['institute']}, {info['student_group']}\n"
             f"📦 <b>ID Замовлення:</b> #{info['order_id']}"
         )
         
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Скасувати цей квиток", callback_data=f"adm_cancel_{info['order_id']}_{row}_{seat}")]
+            [InlineKeyboardButton(text="❌ Скасувати цей квиток", 
+                                  callback_data=f"adm_cancel_{info['order_id']}_{row}_{seat}")]
         ])
-        
         return await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
-    # 🌟 ЯКЩО ЦЕ ЗВИЧАЙНИЙ ПОКУПЕЦЬ КУПУЄ МІСЦЯ:
-    if not raw_data or raw_data == "null":
-        return await message.answer(f"⚠️ Помилка: Дані не отримано.\n<i>(Debug: <code>{raw_data}</code>)</i>", parse_mode="HTML")
-
-    # ... ДАЛІ ТВІЙ СТАРИЙ КОД З try ... except ...
-
+    # 🌟 ЛОГІКА ПОКУПЦЯ
     try:
-        # 👈 Розпаковуємо наш новий формат "Ряд-Місце|Ряд-Місце"
         selected_seats = []
         seat_items = raw_data.split('|')
         
         for item in seat_items:
-            row_part, seat_part = item.split('-')
+            # Парсимо новий формат: Зона-Ряд-Місце
+            parts = item.split('-')
+            if len(parts) != 3:
+                continue
+                
             selected_seats.append({
-                'id': item, # Для сумісності
-                'row': row_part,
-                'seat': int(seat_part)
+                'id': item,
+                'zone': parts[0],
+                'row': parts[1],
+                'seat': parts[2]
             })
             
-        if not selected_seats:
-            return await message.answer("⚠️ Список місць порожній.")
+        qty = len(selected_seats)
+        if qty == 0:
+            return await message.answer("⚠️ Не обрано жодного місця.")
+
+        # Зберігаємо дані у стан ОДИН РАЗ
+        await state.update_data(qty=qty, selected_seats=selected_seats)
+        
+        if qty == 1:
+            # Для одного квитка — одразу на оплату
+            await process_order_payment(message, state, is_organ=True)
+        else:
+            # Для кількох — збираємо дані друзів
+            await state.update_data(total_friends=qty-1, current_friend=1, friends=[])
+            await message.answer(
+                f"👥 Оскільки ти береш {qty} квитків, нам потрібні дані твоїх друзів.\n\n"
+                f"Введи Прізвище, Ім'я та @тег для <b>1-го друга</b>:", 
+                parse_mode="HTML"
+            )
+            await state.set_state(OrderState.waiting_for_friend_data) #[cite: 4]
             
     except Exception as e:
-        return await message.answer(f"⚠️ Помилка обробки: {e}\n<i>(Отримано: <code>{raw_data}</code>)</i>", parse_mode="HTML")
-
-    qty = len(selected_seats)
-    
-    # Далі логіка без змін
-    if qty == 1:
-        await state.update_data(qty=qty, selected_seats=selected_seats)
-        await process_order_payment(message, state, is_organ=True)
-    else:
-        await state.update_data(qty=qty, selected_seats=selected_seats, total_friends=qty-1, current_friend=1, friends=[])
-        await message.answer(
-            f"👥 Оскільки ти береш {qty} квитків, нам потрібні дані твоїх друзів.\n\n"
-            f"Введи Прізвище, Ім'я та @тег для <b>1-го друга</b>:", 
-            parse_mode="HTML"
-        )
-        await state.set_state(OrderState.waiting_for_friend_data)
+        await message.answer(f"⚠️ Помилка обробки даних: {e}")
 
 
 @dp.message(OrderState.waiting_for_quantity)
@@ -1187,7 +1225,8 @@ async def perform_adm_cancel(callback: CallbackQuery):
 
 async def main():
     await db.connect()
-    asyncio.create_task(start_webhook()) 
+    asyncio.create_task(start_webhook())
+    asyncio.create_task(check_expired_bookings()) # 👈 ЗАПУСК ТАЙМЕРА
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

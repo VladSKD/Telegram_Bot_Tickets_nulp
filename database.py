@@ -2,6 +2,8 @@ import asyncpg
 import os
 from dotenv import load_dotenv
 
+import sheets
+
 load_dotenv()
 
 class Database:
@@ -10,6 +12,7 @@ class Database:
 
     async def connect(self):
         self.pool = await asyncpg.create_pool(os.getenv("DATABASE_URL"))
+        
         # Автоматичне створення таблиці для чорного списку
         await self.pool.execute("""
             CREATE TABLE IF NOT EXISTS blacklist (
@@ -34,7 +37,13 @@ class Database:
         except Exception:
             pass # Якщо колонка вже є, ігноруємо помилку
         
-        
+        try:
+            await self.pool.execute("""
+                ALTER TABLE orders 
+                ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();
+            """)
+        except Exception as e:
+            print(f"⚠️ Помилка оновлення таблиці orders: {e}")
         
         try:
             await self.pool.execute("ALTER TABLE orders ADD COLUMN paid_amount FLOAT DEFAULT 0.0;")
@@ -236,3 +245,27 @@ class Database:
 
     async def mark_transaction_processed(self, tx_id: str):
         await self.pool.execute("INSERT INTO processed_transactions (tx_id) VALUES ($1) ON CONFLICT DO NOTHING", tx_id)
+        
+    async def get_occupied_seats(self, event_id):
+        # 1. Місця з бази даних (вже підтверджені оплати)
+        query = "SELECT file_id FROM orders WHERE event_id = $1 AND file_type = 'organ_seats' AND status IN ('confirmed', 'pending')"
+        rows = await self.pool.fetch(query, event_id)
+        
+        db_seats = []
+        for row in rows:
+            if row['file_id']:
+                db_seats.extend(row['file_id'].split(','))
+        
+        # 2. Місця з Google Таблиці (офлайн продажі / бронь)
+        event = await self.get_event(event_id)
+        sheet_seats = await sheets.get_occupied_from_sheet(event['title'])
+        
+        # Об'єднуємо обидва списки без дублікатів
+        return list(set(db_seats + sheet_seats))
+
+    async def add_order(self, user_id, event_id, count, file_id, f_type):
+        # file_id тепер зберігатиме список типу "A-2-5,B-4-10"
+        return await self.pool.fetchval(
+            "INSERT INTO orders (user_id, event_id, ticket_count, file_id, file_type, status) VALUES ($1, $2, $3, $4, $5, 'pending') RETURNING id",
+            user_id, event_id, count, file_id, f_type
+        )
