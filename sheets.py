@@ -5,7 +5,7 @@ import os
 import json
 import re
 
-# --- КОНФІГУРАЦІЯ СЕКТОРІВ ДЛЯ АКТОЇ ЗАЛИ ---
+# --- КОНФІГУРАЦІЯ СЕКТОРІВ ДЛЯ АКТОЇ ЗАЛИ (Excel координати) ---
 SECTOR_MAP = {
     'A': {'c_start': 18, 'c_end': 25, 'r_start': 10, 'r_end': 31, 'h_off': 8},   # R-Y
     'B': {'c_start': 27, 'c_end': 34, 'r_start': 10, 'r_end': 31, 'h_off': 8},   # AA-AH
@@ -21,18 +21,18 @@ def get_client():
     try:
         creds_json = os.getenv("GOOGLE_CREDS_JSON")
         if not creds_json:
-            print("❌ [SHEETS ERROR] Змінна GOOGLE_CREDS_JSON порожня або не знайдена!")
+            print("❌ [SHEETS ERROR] Змінна GOOGLE_CREDS_JSON порожня!")
             return None
         creds_dict = json.loads(creds_json)
         scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         return gspread.authorize(creds)
     except Exception as e:
-        print(f"❌ [SHEETS ERROR] Помилка авторизації Google API: {e}")
+        print(f"❌ [SHEETS ERROR] Помилка авторизації: {e}")
         return None
 
 def translate_coords_to_id(row, col):
-    """Перетворює Excel Row/Col у формат ID: Zone-Row-Seat"""
+    """Excel Row/Col -> ID: Zone-Row-Seat"""
     for zone in ['A', 'B', 'C']:
         m = SECTOR_MAP[zone]
         if m['r_start'] <= row <= m['r_end'] and m['c_start'] <= col <= m['c_end']:
@@ -60,10 +60,8 @@ def _get_or_create_worksheet(event_title):
     client = get_client()
     if not client: return None
     try:
-        if "Гала" in event_title or "Весна" in event_title:
-            url = os.getenv("SPREADSHEET_GALA_URL")
-        else:
-            url = os.getenv("SPREADSHEET_ORGAN_URL")
+        # Вибір таблиці за назвою події
+        url = os.getenv("SPREADSHEET_GALA_URL") if ("Гала" in event_title or "Весна" in event_title) else os.getenv("SPREADSHEET_ORGAN_URL")
         doc = client.open_by_url(url)
         try:
             worksheet = doc.worksheet(event_title)
@@ -78,69 +76,53 @@ def _get_or_create_worksheet(event_title):
         print(f"❌ [SHEETS ERROR] Не вдалося відкрити таблицю: {e}")
         return None
 
-# --- ФУНКЦІЇ ЗАПИСУ ДАНИХ ---
+# --- ФУНКЦІЇ ЗАПИСУ ---
 def _add_order(event_title, order_id, last_name, first_name, username, institute, group, qty, status):
-    """Базова функція для звичайних івентів (Органний зал тощо)"""
+    """Для Органного залу"""
     try:
         ws = _get_or_create_worksheet(event_title)
         if ws:
             ws.append_row([order_id, last_name, first_name, f"@{username}" if username != "-" else "-", institute, group, qty, status])
-            print(f"✅ [SHEETS] Замовлення #{order_id} записано.")
     except Exception as e:
-        print(f"❌ [SHEETS ERROR] Помилка запису замовлення #{order_id}: {e}")
+        print(f"❌ Помилка запису замовлення: {e}")
 
 def _add_gala_order(event_title, order_id, user_info, seat_id, status):
-    """Спеціалізована функція для Актової зали (Гала-концерт)"""
+    """Для Актової зали (Гала)"""
     try:
         ws = _get_or_create_worksheet(event_title)
         if not ws: return
-        parts = seat_id.split('-')
-        zone, row, seat = parts[0], parts[1], parts[2]
-        row_data = [
+        zone, row, seat = seat_id.split('-')
+        ws.append_row([
             order_id, user_info['last_name'], user_info['first_name'],
             f"@{user_info['username']}", user_info['institute'], zone, row, seat, status, "Ні"
-        ]
-        ws.append_row(row_data)
+        ])
     except Exception as e:
-        print(f"❌ [SHEETS ERROR] Помилка запису Гала-замовлення: {e}")
+        print(f"❌ Помилка запису Гала-замовлення: {e}")
 
 async def add_order_to_sheet(*args):
-    """Викликає правильну функцію залежно від кількості аргументів"""
-    if len(args) == 5: # Для Гала-концерту
+    if len(args) == 5:
         await asyncio.to_thread(_add_gala_order, *args)
-    else: # Для Органного залу
+    else:
         await asyncio.to_thread(_add_order, *args)
 
+# --- ОНОВЛЕННЯ ТА СКАСУВАННЯ ---
 def _update_cell_in_sheet(event_title, order_id, column_index, new_value):
     try:
         ws = _get_or_create_worksheet(event_title)
         if not ws: return
         cells = ws.findall(str(order_id), in_column=1)
-        if not cells: return
         for cell in cells:
             ws.update_cell(cell.row, column_index, new_value)
     except Exception as e:
-        print(f"❌ [SHEETS ERROR] Не вдалося оновити статус: {e}")
+        print(f"❌ Не вдалося оновити статус: {e}")
 
 async def update_payment_in_sheet(event_title, order_id, status):
-    await asyncio.to_thread(_update_cell_in_sheet, event_title, order_id, 9, status) # Статус тепер у 9 колонці
+    await asyncio.to_thread(_update_cell_in_sheet, event_title, order_id, 9, status)
 
-# --- СКАСУВАННЯ ТА РЕЄСТР ---
-def _mark_seat_as_cancelled(event_title, order_id, row_num, seat_num):
-    try:
-        ws = _get_or_create_worksheet(event_title)
-        if not ws: return False
-        cells = ws.findall(str(order_id), in_column=1)
-        for cell in cells:
-            ws.update_cell(cell.row, 9, "🔴 СКАСОВАНО")
-        return True
-    except Exception as e:
-        print(f"❌ [SHEETS ERROR] Помилка скасування місця: {e}")
-        return False
+async def cancel_seat_in_sheet(event_title, order_id, row, seat):
+    await asyncio.to_thread(_update_cell_in_sheet, event_title, order_id, 9, "🔴 СКАСОВАНО")
 
-async def cancel_seat_in_sheet(*args):
-    await asyncio.to_thread(_mark_seat_as_cancelled, *args)
-
+# --- РЕЄСТР ТА КОЛЬОРИ ---
 def _upsert_user_in_registry(last_name, first_name, username, institute, group):
     try:
         client = get_client()
@@ -154,16 +136,13 @@ def _upsert_user_in_registry(last_name, first_name, username, institute, group):
                 ws.update(f"A{cell.row}:B{cell.row}", [[last_name, first_name]])
                 ws.update(f"D{cell.row}:E{cell.row}", [[institute, group]])
                 return
-        except gspread.exceptions.CellNotFound:
-            pass
+        except: pass
         ws.append_row([last_name, first_name, user_tag, institute, group])
-    except Exception as e:
-        print(f"❌ [SHEETS ERROR] Помилка реєстру: {e}")
+    except Exception as e: print(f"❌ Помилка реєстру: {e}")
 
 async def upsert_user_in_registry(*args):
     await asyncio.to_thread(_upsert_user_in_registry, *args)
 
-# --- СИНХРОНІЗАЦІЯ КОЛЬОРІВ ---
 def _get_occupied_from_sheet(event_title):
     client = get_client()
     if not client: return []
@@ -172,10 +151,11 @@ def _get_occupied_from_sheet(event_title):
         url = os.getenv("SPREADSHEET_GALA_URL") if is_gala else os.getenv("SPREADSHEET_ORGAN_URL")
         doc = client.open_by_url(url)
         
-        # Назва вкладки змінена на РОЗСАДКА для Актової зали
+        # ВИПРАВЛЕНО: назва вкладки тепер РОЗСАДКА для Гала/Весна
         sheet_name = "РОЗСАДКА" if is_gala else "Схема залу"
         ws = doc.worksheet(sheet_name)
         
+        # enumerate(..., 1) для 1-базової індексації Excel
         all_cells = ws.get_all_cells(get_metadata=True)
         occupied = []
         for r_idx, row_data in enumerate(all_cells, 1):
