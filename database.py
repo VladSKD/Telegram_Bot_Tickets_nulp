@@ -240,18 +240,20 @@ class Database:
         await self.pool.execute("INSERT INTO processed_transactions (tx_id) VALUES ($1) ON CONFLICT DO NOTHING", tx_id)
         
     async def get_occupied_seats(self, event_id):
-        event = await self.get_event(event_id)
-        if not event: return []
-
-        # 1. Місця з бази (оплачені)
+        # 1. Місця з бази (вже оплачені або в броні бота)
         query = "SELECT file_id FROM orders WHERE event_id = $1 AND status IN ('confirmed', 'pending')"
         rows = await self.pool.fetch(query, event_id)
+        
         db_seats = []
         for row in rows:
             if row['file_id']:
                 db_seats.extend(row['file_id'].split(','))
         
-        # 2. Місця з Таблиці (Передаємо тип залу: assembly_hall або organ_hall)
+        # 2. Отримуємо івент, щоб знати venue_type
+        event = await self.get_event(event_id)
+        if not event: return db_seats
+        
+        # ПЕРЕДАЄМО тип залу у sheets 👈
         sheet_seats = await sheets.get_occupied_from_sheet(event['title'], event['venue_type'])
         
         return list(set(db_seats + sheet_seats))

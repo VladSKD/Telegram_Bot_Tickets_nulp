@@ -1,12 +1,10 @@
-import re
-
 import gspread
 from google.oauth2.service_account import Credentials
 import asyncio
 import os
 import json
 
-# --- КООРДИНАТИ СЕКТОРІВ (БЕЗ ЗМІН) ---
+# --- МАПІНГ СЕКТОРІВ (БЕЗ ЗМІН) ---
 SECTOR_MAP = {
     'A': {'c_start': 18, 'c_end': 25, 'r_start': 10, 'r_end': 31, 'h_off': 8},
     'B': {'c_start': 27, 'c_end': 34, 'r_start': 10, 'r_end': 31, 'h_off': 8},
@@ -31,7 +29,6 @@ def get_client():
         return None
 
 def translate_coords_to_id(row, col):
-    """Мапінг координат Excel у формат Zone-Row-Seat"""
     for zone in ['A', 'B', 'C']:
         m = SECTOR_MAP[zone]
         if m['r_start'] <= row <= m['r_end'] and m['c_start'] <= col <= m['c_end']:
@@ -51,120 +48,125 @@ def translate_coords_to_id(row, col):
         return f"Балкон-{row - m['h_off']}-{col - 13}"
     return None
 
-def _get_or_create_worksheet(event_title):
+def _get_or_create_worksheet(event_title, venue_type):
     client = get_client()
-    if not client: return None
+    if not client: 
+        return None
+    
     try:
-        # 🎯 Надійна логіка вибору URL
-        is_gala = "Гала" in event_title or "Весна" in event_title
-        url = os.getenv("SPREADSHEET_GALA_URL") if is_gala else os.getenv("SPREADSHEET_ORGAN_URL")
-        
+        # Вибираємо URL таблиці виключно за типом залу
+        if venue_type == 'assembly_hall':
+            url = os.getenv("SPREADSHEET_GALA_URL")
+        else:
+            url = os.getenv("SPREADSHEET_URL")
+            
         doc = client.open_by_url(url)
+        
         try:
-            return doc.worksheet(event_title)
+            worksheet = doc.worksheet(event_title)
         except gspread.exceptions.WorksheetNotFound:
-            # Створюємо вкладку з правильними колонками
-            ws = doc.add_worksheet(title=event_title, rows="1000", cols="10")
-            ws.append_row([
+            # Створюємо нову вкладку з усіма потрібними колонками
+            worksheet = doc.add_worksheet(title=event_title, rows="1000", cols="10")
+            worksheet.append_row([
                 "ID Замовлення", "Прізвище", "Ім'я", "Telegram", 
-                "Інститут", "Сектор", "Ряд", "Місце", "Статус", "Забрано"
+                "Інститут", "Сектор", "Ряд", "Місце", "Статус", "Квиток забрано"
             ])
-            return ws
+        return worksheet
     except Exception as e:
-        print(f"❌ [SHEETS ERROR] Помилка відкриття: {e}")
+        print(f"❌ [SHEETS ERROR] Не вдалося відкрити таблицю: {e}")
         return None
 
-# --- СИНХРОНІЗАЦІЯ КОЛЬОРІВ ---
 def _get_occupied_from_sheet(event_title, venue_type):
     client = get_client()
     if not client: return []
     try:
-        # Вибираємо URL ТІЛЬКИ за типом залу з бази даних
+        # 🎯 ТЕПЕР ТІЛЬКИ ЗА ТИПОМ ЗАЛУ
         if venue_type == 'assembly_hall':
             url = os.getenv("SPREADSHEET_GALA_URL")
             sheet_name = "РОЗСАДКА"
         else:
-            url = os.getenv("SPREADSHEET_ORGAN_URL")
+            url = os.getenv("SPREADSHEET_URL") # Твоя загальна таблиця
             sheet_name = "Схема залу"
             
         doc = client.open_by_url(url)
-        ws = doc.worksheet(sheet_name) # Тепер помилки не буде!
+        ws = doc.worksheet(sheet_name)
         
-        all_cells = ws.get_all_cells(get_metadata=True)
+        res = doc.fetch_sheet_metadata({'includeGridData': True})
+        sheet_data = next(s for s in res['sheets'] if s['properties']['title'] == sheet_name)
+        grid_data = sheet_data['data'][0]
+        row_data = grid_data.get('rowData', [])
+
         occupied = []
-        for r_idx, row_data in enumerate(all_cells, 1):
-            for c_idx, cell in enumerate(row_data, 1):
+        for r_idx, row in enumerate(row_data, 1):
+            values = row.get('values', [])
+            for c_idx, cell in enumerate(values, 1):
                 bg = cell.get('userEnteredFormat', {}).get('backgroundColor', {})
                 if bg and (bg.get('red', 1) < 1 or bg.get('green', 1) < 1 or bg.get('blue', 1) < 1):
                     seat_id = translate_coords_to_id(r_idx, c_idx)
                     if seat_id: occupied.append(seat_id)
         return occupied
     except Exception as e:
-        print(f"❌ [SHEETS ERROR] Помилка читання кольорів: {e}")
+        print(f"❌ [SHEETS ERROR] Помилка: {e}")
         return []
 
-# Не забудь оновити і цю обгортку
+# Не забудь оновити асинхронну обгортку
 async def get_occupied_from_sheet(event_title, venue_type):
     return await asyncio.to_thread(_get_occupied_from_sheet, event_title, venue_type)
 
-# --- ЗАПИС ЗАМОВЛЕНЬ ---
+# --- ЗАПИС ТА ОНОВЛЕННЯ ---
 def _add_order(event_title, order_id, last_name, first_name, username, institute, group, qty, status):
-    """Універсальний запис (враховує нову структуру колонок)"""
     try:
-        ws = _get_or_create_worksheet(event_title)
-        if not ws: return
-        
-        # Якщо в статусі є інформація про місце (напр. "Р2М5"), витягуємо її
-        sector, row, seat = "-", "-", "-"
-        if "Р" in status and "М" in status:
-            # Спрощений парсинг для Органного залу
-            sector = "Органний"
-            res = re.search(r'Р(\d+)М(\d+)', status)
-            if res:
-                row, seat = res.group(1), res.group(2)
-        
-        # Записуємо в таблицю
-        ws.append_row([order_id, last_name, first_name, f"@{username}", institute, sector, row, seat, status, "Ні"])
+        ws = _get_or_create_worksheet(event_title, 'assembly_hall')
+        if ws:
+            ws.append_row([order_id, last_name, first_name, f"@{username}" if username != "-" else "-", institute, group, qty, status])
     except Exception as e:
-        print(f"❌ [SHEETS ERROR] Помилка запису: {e}")
+        print(f"❌ Помилка запису замовлення: {e}")
 
 def _add_gala_order(event_title, order_id, user_info, seat_id, status):
-    """Спеціальний запис для Актової зали (розбиває Zone-Row-Seat)"""
     try:
-        ws = _get_or_create_worksheet(event_title)
+        ws = _get_or_create_worksheet(event_title, 'assembly_hall')
         if not ws: return
         parts = seat_id.split('-')
         zone, row, seat = parts[0], parts[1], parts[2]
-        
-        ws.append_row([
-            order_id, user_info['last_name'], user_info['first_name'],
-            f"@{user_info['username']}", user_info['institute'], zone, row, seat, status, "Ні"
-        ])
+        ws.append_row([order_id, user_info['last_name'], user_info['first_name'], f"@{user_info['username']}", user_info['institute'], zone, row, seat, status, "Ні"])
     except Exception as e:
-        print(f"❌ [SHEETS ERROR] Помилка запису Гала: {e}")
+        print(f"❌ Помилка запису Гала-замовлення: {e}")
 
 async def add_order_to_sheet(*args):
-    if len(args) == 5: # Для Гала-концерту
+    if len(args) == 5:
         await asyncio.to_thread(_add_gala_order, *args)
-    else: # Для всіх інших
+    else:
         await asyncio.to_thread(_add_order, *args)
 
-# --- ОНОВЛЕННЯ СТАТУСУ ---
-async def update_payment_in_sheet(event_title, order_id, status):
-    # Колонка статусу тепер 9-та
-    await asyncio.to_thread(_update_cell_in_sheet, event_title, order_id, 9, status)
-
-def _update_cell_in_sheet(event_title, order_id, column_index, new_value):
+def _update_cell_in_sheet(event_title, order_id, column_index, new_value, venue_type):
     try:
-        ws = _get_or_create_worksheet(event_title)
-        if not ws: return
+        # Використовуємо нашу нову розумну функцію, щоб знайти правильну таблицю
+        ws = _get_or_create_worksheet(event_title, venue_type)
+        if not ws: 
+            return
+            
+        # Шукаємо всі рядки з цим ID замовлення (стовпчик 1)
         cells = ws.findall(str(order_id), in_column=1)
+        
+        if not cells:
+            print(f"⚠️ [SHEETS] Замовлення #{order_id} не знайдено для оновлення.")
+            return
+
         for cell in cells:
+            # ТУТ БУЛА ПОМИЛКА: використовуємо правильні імена змінних
             ws.update_cell(cell.row, column_index, new_value)
+            
+        print(f"✅ [SHEETS] Статус #{order_id} оновлено на '{new_value}' у таблиці ({venue_type})")
+        
     except Exception as e:
         print(f"❌ [SHEETS ERROR] Помилка оновлення: {e}")
 
-# --- РЕЄСТР ---
+async def update_payment_in_sheet(event_title, order_id, status):
+    await asyncio.to_thread(_update_cell_in_sheet, event_title, order_id, 9, status)
+
+async def cancel_seat_in_sheet(event_title, order_id, row, seat):
+    await asyncio.to_thread(_update_cell_in_sheet, event_title, order_id, 9, "🔴 СКАСОВАНО")
+
 async def upsert_user_in_registry(last_name, first_name, username, institute, group):
     await asyncio.to_thread(_upsert_user_in_registry, last_name, first_name, username, institute, group)
 
@@ -184,4 +186,4 @@ def _upsert_user_in_registry(last_name, first_name, username, institute, group):
         except: pass
         ws.append_row([last_name, first_name, user_tag, institute, group])
     except Exception as e:
-        print(f"❌ [SHEETS ERROR] Помилка реєстру: {e}")
+        print(f"❌ Помилка реєстру: {e}")
