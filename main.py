@@ -194,11 +194,11 @@ def main_kb(user_id):
 def institute_kb():
     buttons = [
         [KeyboardButton(text="Я не студент")], # Найбільша перша кнопка
-        [KeyboardButton(text="ІНЕМ"), KeyboardButton(text="ІБІБ"), KeyboardButton(text="ІАРД")],
-        [KeyboardButton(text="ІППО"), KeyboardButton(text="ІГСН"), KeyboardButton(text="ІЕСК")],
-        [KeyboardButton(text="ІКТА"), KeyboardButton(text="ІГДГ"), KeyboardButton(text="ІСТР"), KeyboardButton(text="ІАДУ")],
-        [KeyboardButton(text="ІКНІ"), KeyboardButton(text="ІПМТ"), KeyboardButton(text="ІХХТ")],
-        [KeyboardButton(text="ІКТЕ"), KeyboardButton(text="ІМІТ"), KeyboardButton(text="ІМФН")]
+        [KeyboardButton(text="ІНЕМ"), KeyboardButton(text="ІППО"), KeyboardButton(text="ІКТА")],
+        [KeyboardButton(text="ІКНІ"), KeyboardButton(text="ІКТЕ"), KeyboardButton(text="ІМФН")],
+        [KeyboardButton(text="ІГСН"), KeyboardButton(text="ІГДГ"), KeyboardButton(text="ІПМТ")],
+        [KeyboardButton(text="ІМІТ"), KeyboardButton(text="ІАРД"), KeyboardButton(text="ІЕСК")],
+        [KeyboardButton(text="ІСТР"), KeyboardButton(text="ІХХТ"), KeyboardButton(text="ІБІБ"), KeyboardButton(text="ІАДУ")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True, one_time_keyboard=True)
 
