@@ -317,22 +317,32 @@ async def process_group(message: Message, state: FSMContext):
 async def show_profile(message: Message, state: FSMContext):
     await state.clear() 
     user = await db.get_user(message.from_user.id)
-    if not user: return await message.answer("❌ Профіль не знайдено. Напиши /start для реєстрації.")
+    
+    if not user: 
+        return await message.answer("❌ Ой, я не знайшов твій профіль. Давай зареєструємось? Напиши /start")
+
+    # Перевіряємо, чи це студент
+    is_student = user['institute'] != "Я не студент"
+
+    # Адаптуємо назви полів
+    inst_label = "🏛 <b>Інститут:</b>" if is_student else "👤 <b>Статус:</b>"
+    group_label = "🎓 <b>Група:</b>" if is_student else "📝 <b>Примітка:</b>"
 
     profile_text = (
         f"👤 <b>ТВІЙ ПРОФІЛЬ</b>\n\n"
         f"📝 <b>Прізвище:</b> {user['last_name']}\n"
         f"📝 <b>Ім'я:</b> {user['first_name']}\n"
-        f"🏛 <b>Інститут:</b> {user['institute']}\n"
-        f"🎓 <b>Група:</b> {user['student_group']}\n\n"
-        f"<i>Якщо помітив помилку, ти можеш змінити свої дані натиснувши кнопку нижче 👇</i>"
+        f"{inst_label} {user['institute']}\n"
+        f"{group_label} {user['student_group']}\n\n"
+        f"<i>Помітив помилку? Тисни на кнопку нижче, щоб оновити дані 👇</i>"
     )
 
+    # Кнопки також адаптуємо (текст на кнопках)
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✏️ Змінити Прізвище", callback_data="prof_edit_last_name")],
-        [InlineKeyboardButton(text="✏️ Змінити Ім'я", callback_data="prof_edit_first_name")],
-        [InlineKeyboardButton(text="✏️ Змінити Інститут", callback_data="prof_edit_institute")],
-        [InlineKeyboardButton(text="✏️ Змінити Групу", callback_data="prof_edit_group")]
+        [InlineKeyboardButton(text="✏️ Прізвище", callback_data="prof_edit_last_name"),
+         InlineKeyboardButton(text="✏️ Ім'я", callback_data="prof_edit_first_name")],
+        [InlineKeyboardButton(text="✏️ Інститут / Статус", callback_data="prof_edit_institute")],
+        [InlineKeyboardButton(text="✏️ Групу / Примітку", callback_data="prof_edit_group")]
     ])
     await message.answer(profile_text, reply_markup=kb, parse_mode="HTML")
 
@@ -341,18 +351,31 @@ async def ask_new_profile_value(callback: CallbackQuery, state: FSMContext):
     field_to_edit = callback.data.replace("prof_edit_", "")
     await state.update_data(edit_field=field_to_edit)
     
-    prompts = {
-        "last_name": "нове Прізвище", "first_name": "нове Ім'я",
-        "institute": "свій Інститут (напр. ІКНІ, ІАРД)", "group": "свою Групу (напр. КН-201)"
-    }
-    
+    user = await db.get_user(callback.from_user.id)
+    is_student = user['institute'] != "Я не student"
+
+    # Визначаємо текст запиту
+    if field_to_edit == "last_name":
+        text = "✍️ Введи своє нове <b>Прізвище</b>:"
+    elif field_to_edit == "first_name":
+        text = "✍️ Введи своє нове <b>Ім'я</b>:"
+    elif field_to_edit == "institute":
+        from main import institute_kb
+        text = "🏛 Обери свій <b>Інститут</b> або статус 'Я не студент':"
+        await callback.message.answer(text, reply_markup=institute_kb(), parse_mode="HTML")
+        await state.set_state(EditProfile.enter_value)
+        return await callback.answer()
+    elif field_to_edit == "group":
+        text = "🎓 Введи свою нову <b>Групу</b>:" if is_student else "📝 Вкажи свою <b>діяльність або примітку</b> (напр. Гість):"
+
     await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer(f"✍️ <b>Введи {prompts.get(field_to_edit, 'нове значення')}:</b>", parse_mode="HTML")
+    await callback.message.answer(text, parse_mode="HTML")
     await state.set_state(EditProfile.enter_value)
     await callback.answer()
 
 @dp.message(EditProfile.enter_value)
 async def save_new_profile_value(message: Message, state: FSMContext):
+    # Якщо юзер випадково натиснув на кнопки головного меню під час редагування
     if message.text in ["Доступні події", "Мій профіль", "Адмін-панель"]:
         await state.clear()
         if message.text == "Доступні події": return await list_events(message)
@@ -360,9 +383,13 @@ async def save_new_profile_value(message: Message, state: FSMContext):
         else: return await admin_panel(message)
 
     data = await state.get_data()
-    await db.update_user_field(message.from_user.id, data['edit_field'], message.text)
+    field = data['edit_field']
+    new_val = message.text
     
-
+    # Оновлюємо в базі даних
+    await db.update_user_field(message.from_user.id, field, new_val)
+    
+    # Синхронізуємо з Google Таблицею (Реєстром)
     user = await db.get_user(message.from_user.id)
     if user:
         asyncio.create_task(sheets.upsert_user_in_registry(
@@ -372,9 +399,14 @@ async def save_new_profile_value(message: Message, state: FSMContext):
             user['institute'], 
             user['student_group']
         ))
-
     
-    await message.answer("✅ <b>Дані успішно оновлено!</b>", parse_mode="HTML")
+
+    await message.answer(
+        "✅ <b>Готово! Я все оновив.</b>", 
+        reply_markup=ReplyKeyboardRemove() if field == "institute" else None,
+        parse_mode="HTML"
+    )
+    
     await state.clear()
     await show_profile(message, state)
 
