@@ -291,50 +291,53 @@ async def process_other_uni_name(message: Message, state: FSMContext):
 @dp.message(Registration.waiting_for_group)
 async def process_group(message: Message, state: FSMContext):
     user_data = await state.get_data()
-    group = message.text # Тут буде або група (напр. ОІ-22), або статус (напр. Гість)
+    raw_group = message.text
+    inst_choice = user_data['institute']
     
-    # 1. Зберігаємо в нашу основну базу даних (PostgreSQL)
+    # --- ЛОГІКА "КРАСИВОГО" ЗАПИСУ ДЛЯ ТАБЛИЦІ ---
+    nulp_institutes = [
+        "ІНЕМ", "ІППО", "ІКТА", "ІКНІ", "ІКТЕ", "ІМФН", 
+        "ІГСН", "ІГДГ", "ІПМТ", "ІМІТ", "ІАРД", "ІЕСК", 
+        "ІСТР", "ІХХТ", "ІБІБ", "ІАДУ"
+    ]
+
+    if inst_choice == "Я не студент":
+        sheet_inst = "Зовнішній гість"
+        sheet_group = raw_group # Тут буде те, що ввів "гість" (напр. Психолог)
+    elif inst_choice in nulp_institutes:
+        sheet_inst = f"НУЛП ({inst_choice})"
+        sheet_group = raw_group # Напр. КН-201
+    else:
+        # Якщо людина ввела назву іншого універу (ЛНУ, УКУ тощо)
+        sheet_inst = f"Університет: {inst_choice}"
+        sheet_group = raw_group
+
+    # 1. Зберігаємо в PostgreSQL (як є, для внутрішньої логіки)
     await db.register_full_user(
         tg_id=message.from_user.id, 
         username=message.from_user.username,
         first_name=user_data['first_name'], 
         last_name=user_data['last_name'],
-        institute=user_data['institute'], 
-        group=group
+        institute=inst_choice, 
+        group=raw_group
     )
     
-    # 2. СИНХРОНІЗАЦІЯ З РЕЄСТРОМ (Google Sheets)
-    # Робимо це через create_task, щоб юзер не чекав відповіді від API таблиць
+    # 2. СИНХРОНІЗАЦІЯ З РЕЄСТРОМ (Відправляємо вже "красиві" дані)
     asyncio.create_task(sheets.upsert_user_in_registry(
         user_data['last_name'], 
         user_data['first_name'], 
         message.from_user.username,
-        user_data['institute'], 
-        group
+        sheet_inst,  # Тепер тут буде "НУЛП (ІКНІ)" або "Зовнішній гість"
+        sheet_group  # Тут група або посада
     ))
     
-    # Формуємо приємне привітання на "ти"
-    first_name = user_data['first_name']
-    
-    if user_data['institute'] == "Я не студент":
-        welcome_msg = (
-            f"✅ <b>Реєстрація успішна, {first_name}!</b>\n\n"
-            "Раді, що ти з нами. Тепер ти можеш вільно переглядати афіші та бронювати квитки на будь-які події.\n\n"
-            "Тисни на кнопку нижче і обирай, куди підемо 👇"
-        )
-    else:
-        welcome_msg = (
-            f"✅ <b>Реєстрація успішна, {first_name}!</b>\n\n"
-            "Тепер тобі доступний перегляд та купівля квитків на всі івенти Політехніки.\n\n"
-            "Обирай цікаву подію в меню нижче 👇"
-        )
-
+    # Привітання
     await message.answer(
-        welcome_msg, 
+        f"✅ <b>Реєстрація успішна, {user_data['first_name']}!</b>\n\n"
+        "Дані збережено. Тепер ти можеш обирати івенти та купувати квитки 👇", 
         reply_markup=main_kb(message.from_user.id),
         parse_mode="HTML"
     )
-    
     await state.clear()
 
 nulp_institutes = [
