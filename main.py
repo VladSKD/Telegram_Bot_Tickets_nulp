@@ -191,6 +191,17 @@ def main_kb(user_id):
         buttons.append([KeyboardButton(text="Адмін-панель")])
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
+def institute_kb():
+    buttons = [
+        [KeyboardButton(text="Я не студент")], # Найбільша перша кнопка
+        [KeyboardButton(text="ІНЕМ"), KeyboardButton(text="ІБІБ"), KeyboardButton(text="ІАРД")],
+        [KeyboardButton(text="ІППО"), KeyboardButton(text="ІГСН"), KeyboardButton(text="ІЕСК")],
+        [KeyboardButton(text="ІКТА"), KeyboardButton(text="ІГДГ"), KeyboardButton(text="ІСТР"), KeyboardButton(text="ІАДУ")],
+        [KeyboardButton(text="ІКНІ"), KeyboardButton(text="ІПМТ"), KeyboardButton(text="ІХХТ")],
+        [KeyboardButton(text="ІКТЕ"), KeyboardButton(text="ІМІТ"), KeyboardButton(text="ІМФН")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True, one_time_keyboard=True)
+
 def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Додати подію", callback_data="admin_add_event")],
@@ -223,19 +234,40 @@ async def process_last_name(message: Message, state: FSMContext):
 @dp.message(Registration.waiting_for_first_name)
 async def process_first_name(message: Message, state: FSMContext):
     await state.update_data(first_name=message.text)
-    await message.answer("🏛 <b>З якого ти інституту?</b>\n<i>(напр. ІКНІ, ІАРД тощо):</i>", parse_mode="HTML")
+    # Відправляємо питання з кнопками інститутів
+    await message.answer(
+        "🏛 <b>З якого ти інституту?</b>\n\n"
+        "Обери свій варіант на кнопках нижче 👇", 
+        reply_markup=institute_kb(),
+        parse_mode="HTML"
+    )
     await state.set_state(Registration.waiting_for_institute)
 
 @dp.message(Registration.waiting_for_institute)
 async def process_institute(message: Message, state: FSMContext):
-    await state.update_data(institute=message.text)
-    await message.answer("🎓 <b>Вкажи свою групу:</b>\n<i>(напр. КН-201):</i>", parse_mode="HTML")
+    choice = message.text
+    await state.update_data(institute=choice)
+    
+    if choice == "Я не студент":
+        await message.answer(
+            "🤝 <b>Прийнято!</b>\n\n"
+            "Оскільки ти не студент, просто вкажи свою посаду або напиши 'Гість':", 
+            reply_markup=ReplyKeyboardRemove(), # Прибираємо кнопки інститутів
+            parse_mode="HTML"
+        )
+    else:
+        await message.answer(
+            f"🎓 <b>Круто, {choice}!</b>\n\n"
+            "Тепер вкажи свою групу (напр. КН-201):", 
+            reply_markup=ReplyKeyboardRemove(),
+            parse_mode="HTML"
+        )
     await state.set_state(Registration.waiting_for_group)
 
 @dp.message(Registration.waiting_for_group)
 async def process_group(message: Message, state: FSMContext):
     user_data = await state.get_data()
-    group = message.text
+    group = message.text # Тут буде або група (напр. ОІ-22), або статус (напр. Гість)
     
     # 1. Зберігаємо в нашу основну базу даних (PostgreSQL)
     await db.register_full_user(
@@ -247,8 +279,8 @@ async def process_group(message: Message, state: FSMContext):
         group=group
     )
     
-    # 2. ДУБЛЮЄМО В ГУГЛ ТАБЛИЦЮ (прямо за твоїм посиланням)
-    # 2. СИНХРОНІЗАЦІЯ З РЕЄСТРОМ (Upsert)
+    # 2. СИНХРОНІЗАЦІЯ З РЕЄСТРОМ (Google Sheets)
+    # Робимо це через create_task, щоб юзер не чекав відповіді від API таблиць
     asyncio.create_task(sheets.upsert_user_in_registry(
         user_data['last_name'], 
         user_data['first_name'], 
@@ -257,12 +289,28 @@ async def process_group(message: Message, state: FSMContext):
         group
     ))
     
+    # Формуємо приємне привітання на "ти"
+    first_name = user_data['first_name']
+    
+    if user_data['institute'] == "Я не студент":
+        welcome_msg = (
+            f"✅ <b>Реєстрація успішна, {first_name}!</b>\n\n"
+            "Раді, що ти з нами. Тепер ти можеш вільно переглядати афіші та бронювати квитки на будь-які події.\n\n"
+            "Тисни на кнопку нижче і обирай, куди підемо 👇"
+        )
+    else:
+        welcome_msg = (
+            f"✅ <b>Реєстрація успішна, {first_name}!</b>\n\n"
+            "Тепер тобі доступний перегляд та купівля квитків на всі івенти Політехніки.\n\n"
+            "Обирай цікаву подію в меню нижче 👇"
+        )
+
     await message.answer(
-        f"✅ <b>Реєстрація успішна, {user_data['first_name']}!</b>\n\n"
-        "Тепер тобі доступний перегляд та купівля квитків. Обирай подію в меню нижче 👇", 
+        welcome_msg, 
         reply_markup=main_kb(message.from_user.id),
         parse_mode="HTML"
     )
+    
     await state.clear()
 
 @dp.message(F.text == "Мій профіль")
@@ -375,21 +423,38 @@ async def start_buy(callback: CallbackQuery, state: FSMContext):
         occ_list = await db.get_occupied_seats(event_id)
         occ_str = ",".join(occ_list)
         
-        # Визначаємо посилання залежно від залу
-        # Якщо ти захостив Актову залу на іншому посиланні: telegram-bot-tickets-nulp-gwfu.vercel.app
+        # Посилання (обов'язково з https://)
         base_url = "https://telegram-bot-tickets-nulp-gwfu.vercel.app" if event['venue_type'] == 'assembly_hall' else "https://telegram-bot-tickets-nulp.vercel.app"
-        
         web_app_url = f"{base_url}/?occ={occ_str}&t={int(time.time())}"
         
+        # Створюємо клавіатуру з ДВОМА кнопками в одному ряду
         kb = ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text="🗺 Відкрити схему залу", web_app=WebAppInfo(url=web_app_url))]],
+            keyboard=[[
+                KeyboardButton(text="🗺 Відкрити схему залу", web_app=WebAppInfo(url=web_app_url)),
+                KeyboardButton(text="❌ Скасувати")
+            ]],
             resize_keyboard=True,
             one_time_keyboard=True
         )
-        await callback.message.answer("Обери бажані місця на інтерактивній схемі 👇", reply_markup=kb)
+        await callback.message.answer("Обери бажані місця на інтерактивній схемі або натисни скасувати 👇", reply_markup=kb)
     else:
-        await callback.message.answer("🛒 <b>Скільки квитків беремо?</b>\n<i>Напиши просто число (наприклад: 1, 2):</i>", parse_mode="HTML")
+        # Для звичайних івентів додамо просту кнопку скасування під числом
+        kb = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="❌ Скасувати")]],
+            resize_keyboard=True
+        )
+        await callback.message.answer("🛒 <b>Скільки квитків беремо?</b>\n<i>Напиши просто число:</i>", reply_markup=kb, parse_mode="HTML")
         await state.set_state(OrderState.waiting_for_quantity)
+
+
+@dp.message(F.text == "❌ Скасувати")
+async def cancel_order(message: Message, state: FSMContext):
+    await state.clear() # Очищаємо стан замовлення
+    await message.answer(
+        "👌 Зрозумів, замовлення скасовано. Якщо передумаєш — я тут!", 
+        reply_markup=main_kb(message.from_user.id) # Повертаємо головне меню
+    )
+
 
 # --- ФІНАЛІЗАЦІЯ ЗАМОВЛЕННЯ (Спільна функція) ---
 async def process_order_payment(message: Message, state: FSMContext, is_organ=False):
@@ -1169,14 +1234,22 @@ async def global_fallback(message: Message, state: FSMContext):
 # --- АДМІНСЬКЕ КЕРУВАННЯ МІСЦЯМИ ---
 @dp.callback_query(F.data == "admin_manage_hall")
 async def admin_manage_hall_list(callback: CallbackQuery):
+    # 1. Отримуємо всі активні події
     events = await db.get_active_events()
-    organ_events = [ev for ev in events if ev.get('venue_type') == 'organ_hall']
-    if not organ_events: return await callback.message.answer("Немає активних подій в Органному залі.")
     
+    # 2. Фільтруємо події, які мають інтерактивну карту (обидва типи залів)
+    hall_events = [ev for ev in events if ev.get('venue_type') in ['organ_hall', 'assembly_hall']]
+    
+    if not hall_events: 
+        return await callback.message.answer("🤷‍♂️ Наразі немає активних подій з картою залу.")
+    
+    # 3. Генеруємо кнопки для всіх знайдених івентів
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"{ev['title']}", callback_data=f"adm_hall_{ev['id']}")] for ev in organ_events
+        [InlineKeyboardButton(text=f"🗺 {ev['title']}", callback_data=f"adm_hall_{ev['id']}")] 
+        for ev in hall_events
     ])
-    await callback.message.edit_text("Обери подію для перегляду карти:", reply_markup=kb)
+    
+    await callback.message.edit_text("<b>Оберіть подію для керуванням розсадкою:</b>", reply_markup=kb, parse_mode="HTML")
 
 dp.callback_query(F.data.startswith("adm_hall_"))
 async def open_admin_hall(callback: CallbackQuery):
