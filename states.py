@@ -9,6 +9,7 @@ class Registration(StatesGroup):
     waiting_for_first_name = State()
     waiting_for_institute = State()
     waiting_for_group = State()
+    waiting_for_other_uni = State()
     
 class EditProfile(StatesGroup):
     edit_field = State()

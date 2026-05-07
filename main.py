@@ -193,13 +193,14 @@ def main_kb(user_id):
 
 def institute_kb():
     buttons = [
-        [KeyboardButton(text="Я не студент")], # Найбільша перша кнопка
+        [KeyboardButton(text="Я не студент"), KeyboardButton(text="Інший університет")], # Найбільша перша кнопка
         [KeyboardButton(text="ІНЕМ"), KeyboardButton(text="ІППО"), KeyboardButton(text="ІКТА")],
         [KeyboardButton(text="ІКНІ"), KeyboardButton(text="ІКТЕ"), KeyboardButton(text="ІМФН")],
         [KeyboardButton(text="ІГСН"), KeyboardButton(text="ІГДГ"), KeyboardButton(text="ІПМТ")],
         [KeyboardButton(text="ІМІТ"), KeyboardButton(text="ІАРД"), KeyboardButton(text="ІЕСК")],
         [KeyboardButton(text="ІСТР"), KeyboardButton(text="ІХХТ"), KeyboardButton(text="ІБІБ"), KeyboardButton(text="ІАДУ")]
     ]
+    
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True, one_time_keyboard=True)
 
 def admin_kb():
@@ -246,22 +247,45 @@ async def process_first_name(message: Message, state: FSMContext):
 @dp.message(Registration.waiting_for_institute)
 async def process_institute(message: Message, state: FSMContext):
     choice = message.text
-    await state.update_data(institute=choice)
     
-    if choice == "Я не студент":
+    if choice == "Інший університет":
+        await state.update_data(institute_type="other_uni")
         await message.answer(
-            "🤝 <b>Прийнято!</b>\n\n"
-            "Оскільки ти не студент, просто вкажи свою посаду або напиши 'Гість':", 
-            reply_markup=ReplyKeyboardRemove(), # Прибираємо кнопки інститутів
-            parse_mode="HTML"
-        )
-    else:
-        await message.answer(
-            f"🎓 <b>Круто, {choice}!</b>\n\n"
-            "Тепер вкажи свою групу (напр. КН-201):", 
+            "🏛 <b>О, цікаво!</b>\n\nЗ якого ти університету? Напиши назву (напр. ЛНУ, УКУ, ЛНМУ):",
             reply_markup=ReplyKeyboardRemove(),
             parse_mode="HTML"
         )
+        # ТУТ ВАЖЛИВО: переходимо в проміжний стан для запису назви універу
+        await state.set_state(Registration.waiting_for_other_uni) 
+        
+    elif choice == "Я не студент":
+        await state.update_data(institute="Я не студент", institute_type="not_student")
+        await message.answer(
+            "🤝 <b>Прийнято!</b>\n\nПросто вкажи свою посаду або напиши 'Гість':", 
+            reply_markup=ReplyKeyboardRemove(),
+            parse_mode="HTML"
+        )
+        await state.set_state(Registration.waiting_for_group)
+        
+    else:
+        # Це інститути Політехніки
+        await state.update_data(institute=choice, institute_type="nulp")
+        await message.answer(
+            f"🎓 <b>Круто, {choice}!</b>\n\nТепер вкажи свою групу (напр. КН-201):", 
+            reply_markup=ReplyKeyboardRemove(),
+            parse_mode="HTML"
+        )
+        await state.set_state(Registration.waiting_for_group)
+
+# НОВИЙ ХЕНДЛЕР для запису назви іншого універу
+@dp.message(Registration.waiting_for_other_uni)
+async def process_other_uni_name(message: Message, state: FSMContext):
+    uni_name = message.text
+    await state.update_data(institute=uni_name) # Записуємо назву універу як "інститут"
+    await message.answer(
+        f"🎓 <b>Зрозумів, {uni_name}!</b>\n\nВкажи свою групу або факультет:",
+        parse_mode="HTML"
+    )
     await state.set_state(Registration.waiting_for_group)
 
 @dp.message(Registration.waiting_for_group)
@@ -313,20 +337,33 @@ async def process_group(message: Message, state: FSMContext):
     
     await state.clear()
 
+nulp_institutes = [
+        "ІНЕМ", "ІППО", "ІКТА", 
+        "ІКНІ", "ІКТЕ", "ІМФН", 
+        "ІГСН", "ІГДГ", "ІПМТ", 
+        "ІМІТ", "ІАРД", "ІЕСК", 
+        "ІСТР", "ІХХТ", "ІБІБ", "ІАДУ"
+]
+
+
+
 @dp.message(F.text == "Мій профіль")
 async def show_profile(message: Message, state: FSMContext):
     await state.clear() 
     user = await db.get_user(message.from_user.id)
-    
-    if not user: 
-        return await message.answer("❌ Ой, я не знайшов твій профіль. Давай зареєструємось? Напиши /start")
+    if not user: return await message.answer("❌ Профіль не знайдено. Напиши /start")
 
-    # Перевіряємо, чи це студент
-    is_student = user['institute'] != "Я не студент"
-
-    # Адаптуємо назви полів
-    inst_label = "🏛 <b>Інститут:</b>" if is_student else "👤 <b>Статус:</b>"
-    group_label = "🎓 <b>Група:</b>" if is_student else "📝 <b>Примітка:</b>"
+    # Визначаємо, як підписувати поля
+    if user['institute'] == "Я не студент":
+        inst_label = "👤 <b>Статус:</b>"
+        group_label = "📝 <b>Діяльність:</b>"
+    elif user['institute'] in nulp_institutes:
+        inst_label = "🏛 <b>Інститут (ЛП):</b>"
+        group_label = "🎓 <b>Група:</b>"
+    else:
+        # Якщо не в списку ЛП і не "Я не студент" — значить інший універ
+        inst_label = "🏛 <b>Університет:</b>"
+        group_label = "🎓 <b>Група/Факультет:</b>"
 
     profile_text = (
         f"👤 <b>ТВІЙ ПРОФІЛЬ</b>\n\n"
@@ -334,10 +371,9 @@ async def show_profile(message: Message, state: FSMContext):
         f"📝 <b>Ім'я:</b> {user['first_name']}\n"
         f"{inst_label} {user['institute']}\n"
         f"{group_label} {user['student_group']}\n\n"
-        f"<i>Помітив помилку? Тисни на кнопку нижче, щоб оновити дані 👇</i>"
+        f"<i>Тисни на кнопки нижче, якщо треба щось змінити 👇</i>"
     )
 
-    # Кнопки також адаптуємо (текст на кнопках)
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ Прізвище", callback_data="prof_edit_last_name"),
          InlineKeyboardButton(text="✏️ Ім'я", callback_data="prof_edit_first_name")],
@@ -352,21 +388,25 @@ async def ask_new_profile_value(callback: CallbackQuery, state: FSMContext):
     await state.update_data(edit_field=field_to_edit)
     
     user = await db.get_user(callback.from_user.id)
-    is_student = user['institute'] != "Я не student"
+    # Перевіряємо, чи юзер з Політехніки
+    is_nulp = user['institute'] in nulp_institutes
 
-    # Визначаємо текст запиту
     if field_to_edit == "last_name":
         text = "✍️ Введи своє нове <b>Прізвище</b>:"
     elif field_to_edit == "first_name":
         text = "✍️ Введи своє нове <b>Ім'я</b>:"
     elif field_to_edit == "institute":
-        from main import institute_kb
-        text = "🏛 Обери свій <b>Інститут</b> або статус 'Я не студент':"
+        text = "🏛 Обери свій <b>Інститут</b> або статус:"
         await callback.message.answer(text, reply_markup=institute_kb(), parse_mode="HTML")
         await state.set_state(EditProfile.enter_value)
         return await callback.answer()
     elif field_to_edit == "group":
-        text = "🎓 Введи свою нову <b>Групу</b>:" if is_student else "📝 Вкажи свою <b>діяльність або примітку</b> (напр. Гість):"
+        if is_nulp:
+            text = "🎓 Введи свою нову <b>Групу</b>:"
+        elif user['institute'] == "Я не студент":
+            text = "📝 Вкажи свою <b>діяльність</b> (напр. Гість):"
+        else:
+            text = "🎓 Вкажи свою <b>Групу або Факультет</b> у твоєму ВНЗ:"
 
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.message.answer(text, parse_mode="HTML")
