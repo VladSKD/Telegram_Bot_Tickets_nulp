@@ -591,9 +591,9 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
         
         # 👇👇👇 ОСЬ ЦІ 4 РЯДКИ ТРЕБА ДОДАТИ 👇👇👇
         status_str = "Очікує оплати"
-        await sheets.add_order_to_sheet(event['title'], order_id, user['last_name'], user['first_name'], username, user['institute'], user['student_group'], 1, status_str)
+        await sheets.add_order_to_sheet(event['title'], order_id, user['last_name'], user['first_name'], username, user['institute'], user['student_group'], 1, status_str, event['venue_type'])
         for friend_info in friends:
-            await sheets.add_order_to_sheet(event['title'], order_id, "Друг", friend_info, "-", "Гість", f"від @{username}", 1, status_str)
+            await sheets.add_order_to_sheet(event['title'], order_id, "Друг", friend_info, "-", "Гість", f"від @{username}", 1, status_str, event['venue_type'])
         # 👆👆👆 ============================== 👆👆👆
         
         price_str = str(event['price']).strip()
