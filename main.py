@@ -81,7 +81,7 @@ async def mono_webhook(request):
                         if total_paid >= required_total:
                             print("✅ [БОТ] Сума зійшлася, видаємо квиток!")
                             await db.update_order_status(order_id, "confirmed")
-                            await sheets.update_payment_in_sheet(event['title'], order_id, "Підтверджено (Авто)")
+                            await sheets.update_payment_in_sheet(event['title'], order_id, "Підтверджено (Авто)", event['venue_type'])
                             
                             msg = (f"✅ <b>Оплату отримано повністю!</b>\n\n"
                                    f"💰 Всього сплачено: {total_paid} грн.\n"
@@ -112,7 +112,7 @@ async def mono_webhook(request):
                                    f"❌ <b>Потрібно ще: {difference} грн</b>\n\n"
                                    f"Будь ласка, доплати різницю на ту саму Банку, <u>обов'язково</u> вказавши той самий код: <code>NULP-{order_id}</code>")
                             await bot.send_message(order['user_id'], msg, parse_mode="HTML")
-                            await sheets.update_payment_in_sheet(event['title'], order_id, f"Недоплата (є {total_paid} з {required_total})")
+                            await sheets.update_payment_in_sheet(event['title'], order_id, f"Недоплата (є {total_paid} з {required_total})", event['venue_type'])
 
     except Exception as e:
         print(f"❌ [ПОМИЛКА]: {e}")
@@ -557,11 +557,11 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
         
         if is_organ:
             buyer_seat = seats[0]
-            await sheets.add_order_to_sheet(event['title'], order_id, user['last_name'], user['first_name'], username, user['institute'], user['student_group'], 1, f"Підтверджено (Р{buyer_seat['row']}М{buyer_seat['seat']})")
+            await sheets.add_order_to_sheet(event['title'], order_id, user['last_name'], user['first_name'], username, user['institute'], user['student_group'], 1, f"Підтверджено (Р{buyer_seat['row']}М{buyer_seat['seat'], event['venue_type']})")
             
             for i, friend_info in enumerate(friends):
                 f_seat = seats[i+1]
-                await sheets.add_order_to_sheet(event['title'], order_id, "Друг", friend_info, "-", "Гість", f"від @{username}", 1, f"Підтверджено (Р{f_seat['row']}М{f_seat['seat']})")
+                await sheets.add_order_to_sheet(event['title'], order_id, "Друг", friend_info, "-", "Гість", f"від @{username}", 1, f"Підтверджено (Р{f_seat['row']}М{f_seat['seat'], event['venue_type']})")
             
             formatted_seats = "\n".join([f"📍 Ряд: <b>{s['row']}</b>, Місце: <b>{s['seat']}</b>" for s in seats])
             await message.answer(f"✅ <b>Бронювання успішне!</b>\n\n🎟 <b>Твої місця ({qty} шт.):</b>\n{formatted_seats}\n\n📌 {event['success_message']}", parse_mode="HTML")
@@ -578,7 +578,7 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
                 else:
                     await message.answer(f"⚠️ Квиток для Ряду {s['row']}, Місця {s['seat']} ще генерується. Організатори надішлють його згодом.")
         else:
-            await sheets.add_order_to_sheet(event['title'], order_id, user['last_name'], user['first_name'], username, user['institute'], user['student_group'], 1, "Безкоштовно")
+            await sheets.add_order_to_sheet(event['title'], order_id, user['last_name'], user['first_name'], username, user['institute'], user['student_group'], event['venue_type'], 1, "Безкоштовно")
             for friend_info in friends:
                 await sheets.add_order_to_sheet(event['title'], order_id, "Друг", friend_info, "-", "Гість", f"від @{username}", 1, "Безкоштовно")
                 
@@ -821,7 +821,7 @@ async def get_proof(message: Message, state: FSMContext):
     status_str = "Очікує (Скріншот)" if req_conf else "Підтверджено"
     
     # 2. ОНОВЛЮЄМО статус у таблиці (замість створення нових рядків)
-    await sheets.update_payment_in_sheet(event['title'], order_id, status_str)
+    await sheets.update_payment_in_sheet(event['title'], order_id, status_str, event['venue_type'])
     
     caption = (
         f"🚨 Нова оплата #{order_id}!\n\n"
@@ -1204,12 +1204,12 @@ async def handle_decision(callback: CallbackQuery):
     
     if action == "conf":
         await db.update_order_status(order_id, "confirmed")
-        await sheets.update_payment_in_sheet(event['title'], order_id, "Підтверджено")
+        await sheets.update_payment_in_sheet(event['title'], order_id, "Підтверджено", event['venue_type'])
         await bot.send_message(order['user_id'], f"Твоя оплата підтверджена!\n\n{event['success_message']}")
         await callback.message.edit_reply_markup(reply_markup=None)
         await callback.answer("Оплата підтверджена!")
     else:
-        await sheets.update_payment_in_sheet(event['title'], order_id, "Відхилено")
+        await sheets.update_payment_in_sheet(event['title'], order_id, "Відхилено", event['venue_type'])
         await bot.send_message(order['user_id'], "Оплата не підтверджена. Перевір дані або напиши адміну.")
         await callback.message.edit_reply_markup(reply_markup=None)
         await callback.message.reply("Замовлення відхилено.")
@@ -1361,7 +1361,7 @@ async def perform_adm_cancel(callback: CallbackQuery):
     
     if success:
         # 2. ОНОВЛЮЄМО GOOGLE ТАБЛИЦЮ 👈
-        await sheets.cancel_seat_in_sheet(event['title'], order_id, row, seat)
+        await sheets.cancel_seat_in_sheet(event['title'], order_id, row, seat, event['venue_type'])
         
         await callback.message.edit_text(callback.message.text + f"\n\n❌ <b>Квиток (Ряд {row}, Місце {seat}) скасовано в БД та Таблиці!</b>", parse_mode="HTML")
         

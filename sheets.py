@@ -54,18 +54,14 @@ def _get_or_create_worksheet(event_title, venue_type):
         return None
     
     try:
-        # Вибираємо URL таблиці виключно за типом залу
-        if venue_type == 'assembly_hall':
-            url = os.getenv("SPREADSHEET_GALA_URL")
-        else:
-            url = os.getenv("SPREADSHEET_URL")
-            
+        # ЕКСТРЕНИЙ ФІКС: Жорстко вшите посилання на єдину таблицю
+        url = "https://docs.google.com/spreadsheets/d/1CYx4V7_p7keMeKUy2Q_5Rtzy8OuehsifceVTObFD5cQ/edit"
         doc = client.open_by_url(url)
         
         try:
             worksheet = doc.worksheet(event_title)
         except gspread.exceptions.WorksheetNotFound:
-            # Створюємо нову вкладку з усіма потрібними колонками
+            # Створюємо нову вкладку
             worksheet = doc.add_worksheet(title=event_title, rows="1000", cols="10")
             worksheet.append_row([
                 "ID Замовлення", "Прізвище", "Ім'я", "Telegram", 
@@ -80,12 +76,12 @@ def _get_occupied_from_sheet(event_title, venue_type):
     client = get_client()
     if not client: return []
     try:
-        # 🎯 ТЕПЕР ТІЛЬКИ ЗА ТИПОМ ЗАЛУ
+        # ЕКСТРЕНИЙ ФІКС: Те ж саме жорстко вшите посилання
+        url = "https://docs.google.com/spreadsheets/d/1CYx4V7_p7keMeKUy2Q_5Rtzy8OuehsifceVTObFD5cQ/edit"
+        
         if venue_type == 'assembly_hall':
-            url = os.getenv("SPREADSHEET_GALA_URL")
             sheet_name = "РОЗСАДКА"
         else:
-            url = os.getenv("SPREADSHEET_URL") # Твоя загальна таблиця
             sheet_name = "Схема залу"
             
         doc = client.open_by_url(url)
@@ -114,9 +110,9 @@ async def get_occupied_from_sheet(event_title, venue_type):
     return await asyncio.to_thread(_get_occupied_from_sheet, event_title, venue_type)
 
 # --- ЗАПИС ТА ОНОВЛЕННЯ ---
-def _add_order(event_title, order_id, last_name, first_name, username, institute, group, qty, status):
+def _add_order(event_title, order_id, last_name, first_name, username, institute, group, qty, status, venue_type):
     try:
-        ws = _get_or_create_worksheet(event_title, 'assembly_hall')
+        ws = _get_or_create_worksheet(event_title, venue_type)
         if ws:
             ws.append_row([order_id, last_name, first_name, f"@{username}" if username != "-" else "-", institute, group, qty, status])
     except Exception as e:
@@ -161,11 +157,11 @@ def _update_cell_in_sheet(event_title, order_id, column_index, new_value, venue_
     except Exception as e:
         print(f"❌ [SHEETS ERROR] Помилка оновлення: {e}")
 
-async def update_payment_in_sheet(event_title, order_id, status):
-    await asyncio.to_thread(_update_cell_in_sheet, event_title, order_id, 9, status)
+async def update_payment_in_sheet(event_title, order_id, status, venue_type):
+    await asyncio.to_thread(_update_cell_in_sheet, event_title, order_id, 9, status, venue_type)
 
-async def cancel_seat_in_sheet(event_title, order_id, row, seat):
-    await asyncio.to_thread(_update_cell_in_sheet, event_title, order_id, 9, "🔴 СКАСОВАНО")
+async def cancel_seat_in_sheet(event_title, order_id, row, seat, venue_type):
+    await asyncio.to_thread(_update_cell_in_sheet, event_title, order_id, 9, "🔴 СКАСОВАНО", venue_type)
 
 async def upsert_user_in_registry(last_name, first_name, username, institute, group):
     await asyncio.to_thread(_upsert_user_in_registry, last_name, first_name, username, institute, group)
@@ -187,3 +183,5 @@ def _upsert_user_in_registry(last_name, first_name, username, institute, group):
         ws.append_row([last_name, first_name, user_tag, institute, group])
     except Exception as e:
         print(f"❌ Помилка реєстру: {e}")
+        
+       
