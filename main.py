@@ -298,7 +298,7 @@ async def process_group(message: Message, state: FSMContext):
     nulp_institutes = [
         "ІНЕМ", "ІППО", "ІКТА", "ІКНІ", "ІКТЕ", "ІМФН", 
         "ІГСН", "ІГДГ", "ІПМТ", "ІМІТ", "ІАРД", "ІЕСК", 
-        "ІСТР", "ІХХТ", "ІБІБ", "ІАДУ"
+        "ІВБІ", "ІХХТ", "ІБІБ", "ІППТ"
     ]
 
     if inst_choice == "Я не студент":
@@ -345,7 +345,7 @@ nulp_institutes = [
         "ІКНІ", "ІКТЕ", "ІМФН", 
         "ІГСН", "ІГДГ", "ІПМТ", 
         "ІМІТ", "ІАРД", "ІЕСК", 
-        "ІСТР", "ІХХТ", "ІБІБ", "ІАДУ"
+        "ІВБІ", "ІХХТ", "ІБІБ", "ІППТ"
 ]
 
 
@@ -524,9 +524,16 @@ async def start_buy(callback: CallbackQuery, state: FSMContext):
 
 @dp.message(F.text == "❌ Скасувати")
 async def cancel_order(message: Message, state: FSMContext):
+    # Перевіряємо, чи людина взагалі знаходиться в процесі замовлення
+    current_state = await state.get_state()
+    
+    if current_state is None:
+        # Якщо процесу немає, просто повертаємо головне меню і ігноруємо
+        return await message.answer("Ти зараз нічого не бронюєш 😅 Обирай події в меню 👇", reply_markup=main_kb(message.from_user.id))
+        
     await state.clear() # Очищаємо стан замовлення
     await message.answer(
-        "👌 Зрозумів, замовлення скасовано. Якщо передумаєш — я тут!", 
+        "👌 Зрозумів, процес скасовано. Якщо передумаєш — я тут!", 
         reply_markup=main_kb(message.from_user.id) # Повертаємо головне меню
     )
 
@@ -564,7 +571,7 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
                 await sheets.add_order_to_sheet(event['title'], order_id, "Друг", friend_info, "-", "Гість", f"від @{username}", 1, f"Підтверджено (Р{f_seat['row']}М{f_seat['seat'], event['venue_type']})")
             
             formatted_seats = "\n".join([f"📍 Ряд: <b>{s['row']}</b>, Місце: <b>{s['seat']}</b>" for s in seats])
-            await message.answer(f"✅ <b>Бронювання успішне!</b>\n\n🎟 <b>Твої місця ({qty} шт.):</b>\n{formatted_seats}\n\n📌 {event['success_message']}", parse_mode="HTML")
+            await message.answer(f"✅ <b>Бронювання успішне!</b>\n\n🎟 <b>Твої місця ({qty} шт.):</b>\n{formatted_seats}\n\n📌 {event['success_message']}", reply_markup=main_kb(message.from_user.id), parse_mode="HTML")
             
             await message.answer("Ось твої офіційні квитки для входу:")
             for s in seats:
@@ -582,7 +589,7 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
             for friend_info in friends:
                 await sheets.add_order_to_sheet(event['title'], order_id, "Друг", friend_info, "-", "Гість", f"від @{username}", 1, "Безкоштовно")
                 
-            await message.answer(f"✅ <b>Бронювання успішне!</b>\n\n🎟 <b>Кількість:</b> {qty} шт.\n\n📌 {event['success_message']}", parse_mode="HTML")
+            await message.answer(f"✅ <b>Бронювання успішне!</b>\n\n🎟 <b>Кількість:</b> {qty} шт.\n\n📌 {event['success_message']}", reply_markup=main_kb(message.from_user.id), parse_mode="HTML")
             
         await state.clear()
     else:
@@ -623,8 +630,13 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
             [InlineKeyboardButton(text="📸 Я забув вказати код (надіслати скрін)", callback_data=f"forgot_{order_id}")]
         ])
         
+
+
+        await message.answer("🔄 Фіксую замовлення...", reply_markup=main_kb(message.from_user.id))
+        
         await message.answer(text, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=True)
         await state.clear()
+        
 
 
 
