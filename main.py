@@ -706,12 +706,29 @@ async def check_expired_bookings():
 
 @dp.message(F.web_app_data)
 async def handle_web_app_data(message: Message, state: FSMContext):
-    await message.answer("🔄 Обробляю твій вибір...", reply_markup=main_kb(message.from_user.id))
     raw_data = message.web_app_data.data
+    current_state = await state.get_state()
 
-    # 1. Перевірка на порожні дані
-    if not raw_data or raw_data == "null":
-        return await message.answer("⚠️ Помилка: Дані не отримано.", parse_mode="HTML")
+    # --- НОВА ЛОГІКА: АДМІН СТВОРЮЄ ПОДІЮ ---
+    if current_state == AddEventState.picking_seats:
+        if not raw_data or raw_data == "null":
+            return await message.answer("⚠️ Місця не обрано.")
+            
+        # Парсимо обрані місця (вони приходять через | )
+        seat_ids = raw_data.split('|')
+        qty = len(seat_ids)
+        
+        # Зберігаємо список ID місць (напр. ["1-1", "1-2"])
+        await state.update_data(selected_seats=seat_ids, total_tickets=qty)
+        
+        await message.answer(
+            f"✅ Обрано <b>{qty}</b> місць для продажу.\n\n"
+            f"Тепер введи точну назву локації (напр. 'Органний зал, центральний вхід'):",
+            reply_markup=ReplyKeyboardRemove(), # Прибираємо кнопку WebApp
+            parse_mode="HTML"
+        )
+        await state.set_state(AddEventState.location)
+        return # Виходимо, щоб не спрацювала логіка купівлі
 
     # 🌟 ЛОГІКА АДМІНА
     # 🌟 ЛОГІКА АДМІНА
@@ -1002,16 +1019,24 @@ async def seat_mode_select(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer("Введіть точне місце проведення (локацію):")
         await state.set_state(AddEventState.location)
     else:
-        # Початкова пуста карта (наприклад, 3 ряди по 5 місць для тесту)
-        # В реальності тут може бути ваша структура залу
-        selected_seats = [] 
-        await state.update_data(selected_seats=selected_seats)
+        # Використовуємо WebApp для вибору місць, які будуть у продажу
+        # Передаємо параметр mode=admin_setup (якщо ваш WebApp це підтримує) 
+        # або просто відкриваємо порожню карту
+        web_app_url = "https://telegram-bot-tickets-nulp.vercel.app/?mode=admin_setup"
         
-        await callback.message.edit_text(
-            "Оберіть місця на карті. Коли закінчите — натисніть 'Готово'",
-            reply_markup=get_organ_hall_kb(selected_seats)
+        kb = ReplyKeyboardMarkup(
+            keyboard=[[
+                KeyboardButton(text="🗺 Обрати місця для продажу", web_app=WebAppInfo(url=web_app_url)),
+                KeyboardButton(text="❌ Скасувати")
+            ]],
+            resize_keyboard=True
         )
-        await state.set_state(AddEventState.picking_seats)        
+        
+        await callback.message.answer(
+            "Відкрий схему залу та обери всі місця, які будуть доступні для купівлі:",
+            reply_markup=kb
+        )
+        await state.set_state(AddEventState.picking_seats)       
 
 def get_organ_hall_kb(selected_seats: list):
     builder = InlineKeyboardBuilder()
@@ -1060,8 +1085,19 @@ async def seats_confirmed(callback: CallbackQuery, state: FSMContext):
 @dp.message(AddEventState.location)
 async def add_ev_location(message: Message, state: FSMContext):
     await state.update_data(location=message.text)
-    await message.answer("Введіть загальну кількість квитків на подію (тільки число):")
-    await state.set_state(AddEventState.total_tickets)
+    data = await state.get_data()
+    
+    # Якщо ми вже маємо кількість з WebApp, пропускаємо ручне введення
+    if "total_tickets" in data:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Безкоштовна", callback_data="ev_free")],
+            [InlineKeyboardButton(text="Платна", callback_data="ev_paid")]
+        ])
+        await message.answer(f"Кількість квитків визначена автоматично: {data['total_tickets']}\nЯка це подія?", reply_markup=kb)
+        await state.set_state(AddEventState.is_free)
+    else:
+        await message.answer("Введіть загальну кількість квитків на подію (тільки число):")
+        await state.set_state(AddEventState.total_tickets)
 
 @dp.message(AddEventState.total_tickets)
 async def add_ev_tickets(message: Message, state: FSMContext):
