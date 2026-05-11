@@ -26,6 +26,8 @@ class AddEventState(StatesGroup):
     description = State()
     date_time = State()
     venue_type = State()
+    seat_selection_mode = State()
+    picking_seats = State()
     location = State() 
     total_tickets = State() 
     is_free = State()
@@ -34,7 +36,6 @@ class AddEventState(StatesGroup):
     bank_link = State()
     card_number = State()
     requires_confirmation = State() 
-    available_seats = State() # Новий стан
     success_message = State()
     
 class AdminDelete(StatesGroup):

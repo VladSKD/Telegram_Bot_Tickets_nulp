@@ -18,6 +18,9 @@ from aiogram.types import ReplyKeyboardRemove
 from states import AdminTickets
 from aiohttp import web
 import aiohttp 
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder  # Окремий пакет для білдерів
 
 async def handle(request):
     return web.Response(text="Bot is alive!")
@@ -940,47 +943,138 @@ async def add_ev_start(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer("Введіть назву події:")
     await state.set_state(AddEventState.title)
 
-async def ask_about_price(message: Message, state: FSMContext):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Безкоштовна", callback_data="ev_free")],
-        [InlineKeyboardButton(text="Платна", callback_data="ev_paid")]
-    ])
-    await message.answer("💰 <b>Яка це подія?</b>", reply_markup=kb, parse_mode="HTML")
-    await state.set_state(AddEventState.is_free)
+@dp.message(AddEventState.title)
+async def add_ev_title(message: Message, state: FSMContext):
+    await state.update_data(title=message.text)
+    await message.answer("Прикріпіть афішу до події (надішліть фото):")
+    await state.set_state(AddEventState.photo)
 
-# --- ПРОДОВЖЕННЯ ЛОГІКИ СТВОРЕННЯ ---
+@dp.message(AddEventState.photo, F.photo)
+async def add_ev_photo(message: Message, state: FSMContext):
+    photo_id = message.photo[-1].file_id
+    await state.update_data(photo_id=photo_id)
+    await message.answer("Введіть опис події:")
+    await state.set_state(AddEventState.description)
+
+@dp.message(AddEventState.photo)
+async def add_ev_photo_wrong(message: Message):
+    await message.answer("❌ Будь ласка, надішліть саме фотографію (афішу):")
+
+@dp.message(AddEventState.description)
+async def add_ev_desc(message: Message, state: FSMContext):
+    await state.update_data(desc=message.text)
+    await message.answer("Введіть дату та час (напр. 20.05 о 18:00):")
+    await state.set_state(AddEventState.date_time)
+
+@dp.message(AddEventState.date_time)
+async def add_ev_dt(message: Message, state: FSMContext):
+    await state.update_data(dt=message.text)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎹 Органний зал", callback_data="venue_organ_hall")],
+        [InlineKeyboardButton(text="🏛 Актова зала (NEW)", callback_data="venue_assembly_hall")], # Додаємо це
+        [InlineKeyboardButton(text="🏢 Інше / Немає значення", callback_data="venue_other")]
+    ])
+    await message.answer("Обери тип локації:", reply_markup=kb)
+    await state.set_state(AddEventState.venue_type)
+
+@dp.callback_query(AddEventState.venue_type, F.data.startswith("venue_"))
+async def add_ev_venue_type(callback: CallbackQuery, state: FSMContext):
+    venue_type = callback.data.replace("venue_", "") 
+    await state.update_data(venue_type=venue_type)
+
+    if venue_type == "organ_hall":
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Усі місця", callback_data="seats_all")],
+            [InlineKeyboardButton(text="Обрати конкретні місця", callback_data="seats_manual")]
+        ])
+        await callback.message.edit_text("Ви обрали Органний зал. Як будемо продавати місця?", reply_markup=kb)
+        await state.set_state(AddEventState.seat_selection_mode)
+    else:
+        await callback.message.edit_text("Тепер введи точне місце проведення текстом:")
+        await state.set_state(AddEventState.location)
+        
+@dp.callback_query(AddEventState.seat_selection_mode, F.data.startswith("seats_"))
+async def seat_mode_select(callback: CallbackQuery, state: FSMContext):
+    mode = callback.data.replace("seats_", "")
+    
+    if mode == "all":
+        await state.update_data(selected_seats="all")
+        await callback.message.answer("Введіть точне місце проведення (локацію):")
+        await state.set_state(AddEventState.location)
+    else:
+        # Початкова пуста карта (наприклад, 3 ряди по 5 місць для тесту)
+        # В реальності тут може бути ваша структура залу
+        selected_seats = [] 
+        await state.update_data(selected_seats=selected_seats)
+        
+        await callback.message.edit_text(
+            "Оберіть місця на карті. Коли закінчите — натисніть 'Готово'",
+            reply_markup=get_organ_hall_kb(selected_seats)
+        )
+        await state.set_state(AddEventState.picking_seats)        
+
+def get_organ_hall_kb(selected_seats: list):
+    builder = InlineKeyboardBuilder()
+    # Створюємо сітку залу (наприклад, 5 рядів по 8 місць)
+    for r in range(1, 6):
+        buttons = []
+        for s in range(1, 9):
+            seat_id = f"{r}_{s}"
+            text = f"✅{r}-{s}" if seat_id in selected_seats else f"{r}-{s}"
+            buttons.append(InlineKeyboardButton(text=text, callback_query_data=f"seat_toggle:{seat_id}"))
+        builder.row(*buttons)
+    
+    builder.row(InlineKeyboardButton(text="✅ ГОТОВО (Зберегти)", callback_query_data="seats_done"))
+    return builder.as_markup()
+
+@dp.callback_query(AddEventState.picking_seats, F.data.startswith("seat_toggle:"))
+async def toggle_seat(callback: CallbackQuery, state: FSMContext):
+    seat_id = callback.data.split(":")[1]
+    data = await state.get_data()
+    selected_seats = data.get("selected_seats", [])
+
+    if seat_id in selected_seats:
+        selected_seats.remove(seat_id)
+    else:
+        selected_seats.append(seat_id)
+
+    await state.update_data(selected_seats=selected_seats)
+    await callback.message.edit_reply_markup(reply_markup=get_organ_hall_kb(selected_seats))
+    await callback.answer()
+
+@dp.callback_query(AddEventState.picking_seats, F.data == "seats_done")
+async def seats_confirmed(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    selected_seats = data.get("selected_seats", [])
+    
+    if not selected_seats:
+        return await callback.answer("Оберіть хоча б одне місце!", show_alert=True)
+
+    # АВТОМАТИЧНО рахуємо кількість квитків
+    total_tickets = len(selected_seats)
+    await state.update_data(total_tickets=total_tickets)
+    
+    await callback.message.answer(f"Обрано місць: {total_tickets}. Введіть точну адресу/локацію:")
+    await state.set_state(AddEventState.location)
+
+@dp.message(AddEventState.location)
+async def add_ev_location(message: Message, state: FSMContext):
+    await state.update_data(location=message.text)
+    await message.answer("Введіть загальну кількість квитків на подію (тільки число):")
+    await state.set_state(AddEventState.total_tickets)
+
 @dp.message(AddEventState.total_tickets)
 async def add_ev_tickets(message: Message, state: FSMContext):
     if not message.text.isdigit() or int(message.text) <= 0: 
         return await message.answer("Введіть ціле додатнє число (більше нуля)!")
-    
     await state.update_data(total_tickets=int(message.text))
-    data = await state.get_data()
-
-    # Якщо це зал з картою — запитуємо про доступні місця
-    if data['venue_type'] in ['organ_hall', 'assembly_hall']:
-        await message.answer(
-            "📍 <b>Налаштування доступних місць</b>\n\n"
-            "Введіть список дозволених місць через кому (напр: <code>12-1, 12-2, 12А-5</code>).\n\n"
-            "Або просто напиши <b>'Всі'</b>, щоб відкрити весь зал для вибору:",
-            parse_mode="HTML"
-        )
-        await state.set_state(AddEventState.available_seats)
-    else:
-        # Для звичайних івентів пропускаємо цей крок
-        await state.update_data(available_seats_list=None)
-        await ask_about_price(message, state)
-
-@dp.message(AddEventState.available_seats)
-async def add_ev_available_seats(message: Message, state: FSMContext):
-    val = message.text.strip()
-    if val.lower() in ['всі', 'все', 'all', '-', 'вси']:
-        await state.update_data(available_seats_list=None)
-    else:
-        # Зберігаємо рядок з місцями (напр. "1-1,1-2,12А-5")
-        await state.update_data(available_seats_list=val)
     
-    await ask_about_price(message, state)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Безкоштовна", callback_data="ev_free")],
+        [InlineKeyboardButton(text="Платна", callback_data="ev_paid")]
+    ])
+    await message.answer("Яка це подія?", reply_markup=kb)
+    await state.set_state(AddEventState.is_free)
 
 @dp.callback_query(AddEventState.is_free, F.data.in_(["ev_free", "ev_paid"]))
 async def set_ev_type(callback: CallbackQuery, state: FSMContext):
@@ -989,6 +1083,7 @@ async def set_ev_type(callback: CallbackQuery, state: FSMContext):
     
     if is_free:
         await state.update_data(is_fixed_price=True, price="0", link="", card="", requires_confirmation=False)
+        await state.update_data(is_fixed_price=True, price="0", link="", card="")
         await callback.message.answer("Введіть фінальне повідомлення (напр. 'Забирай квиток в 218 кабінеті'):")
         await state.set_state(AddEventState.success_message)
     else:
@@ -1030,15 +1125,15 @@ async def add_ev_card(message: Message, state: FSMContext):
     await message.answer("Введіть фінальне повідомлення після підтвердження оплати:")
     await state.set_state(AddEventState.success_message)
 
+
+
 @dp.message(AddEventState.success_message)
 async def add_ev_final(message: Message, state: FSMContext):
     d = await state.get_data()
-    # 🌟 Додаємо d.get('available_seats_list') як останній аргумент
     await db.add_event(
         d['title'], d['desc'], d['photo_id'], d['dt'], d['venue_type'], 
         d['location'], d['total_tickets'], d['is_free'], d['price'], 
         d.get('link', ''), d.get('card', ''), message.text, 
-        d.get('available_seats_list')
     )
     await message.answer("✅ Подію успішно додано!", reply_markup=main_kb(message.from_user.id))
     await state.clear()
