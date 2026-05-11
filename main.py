@@ -587,7 +587,17 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
             formatted_seats = "\n".join([f"📍 Ряд: <b>{s['row']}</b>, Місце: <b>{s['seat']}</b>" for s in seats])
             await message.answer(f"✅ <b>Бронювання успішне!</b>\n\n🎟 <b>Твої місця ({qty} шт.):</b>\n{formatted_seats}\n\n📌 {event['success_message']}", reply_markup=main_kb(message.from_user.id), parse_mode="HTML")
             
-            # (Логіка відправки квитків залишається без змін...)
+            await message.answer("Ось твої офіційні квитки для входу:")
+            for s in seats:
+                ticket_data = await db.get_seat_ticket(event_id, s['row'], s['seat'])
+                if ticket_data:
+                    caption = f"🎟 Ряд {s['row']}, Місце {s['seat']}"
+                    if ticket_data['file_type'] == 'photo':
+                        await bot.send_photo(message.chat.id, ticket_data['file_id'], caption=caption)
+                    else:
+                        await bot.send_document(message.chat.id, ticket_data['file_id'], caption=caption)
+                else:
+                    await message.answer(f"⚠️ Квиток для Ряду {s['row']}, Місця {s['seat']} ще генерується. Організатори надішлють його згодом.")
         else:
             # Логіка для звичайних БЕЗКОШТОВНИХ подій
             await sheets.add_order_to_sheet(
