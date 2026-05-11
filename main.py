@@ -940,65 +940,47 @@ async def add_ev_start(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer("Введіть назву події:")
     await state.set_state(AddEventState.title)
 
-@dp.message(AddEventState.title)
-async def add_ev_title(message: Message, state: FSMContext):
-    await state.update_data(title=message.text)
-    await message.answer("Прикріпіть афішу до події (надішліть фото):")
-    await state.set_state(AddEventState.photo)
-
-@dp.message(AddEventState.photo, F.photo)
-async def add_ev_photo(message: Message, state: FSMContext):
-    photo_id = message.photo[-1].file_id
-    await state.update_data(photo_id=photo_id)
-    await message.answer("Введіть опис події:")
-    await state.set_state(AddEventState.description)
-
-@dp.message(AddEventState.photo)
-async def add_ev_photo_wrong(message: Message):
-    await message.answer("❌ Будь ласка, надішліть саме фотографію (афішу):")
-
-@dp.message(AddEventState.description)
-async def add_ev_desc(message: Message, state: FSMContext):
-    await state.update_data(desc=message.text)
-    await message.answer("Введіть дату та час (напр. 20.05 о 18:00):")
-    await state.set_state(AddEventState.date_time)
-
-@dp.message(AddEventState.date_time)
-async def add_ev_dt(message: Message, state: FSMContext):
-    await state.update_data(dt=message.text)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎹 Органний зал", callback_data="venue_organ_hall")],
-        [InlineKeyboardButton(text="🏛 Актова зала (NEW)", callback_data="venue_assembly_hall")], # Додаємо це
-        [InlineKeyboardButton(text="🏢 Інше / Немає значення", callback_data="venue_other")]
-    ])
-    await message.answer("Обери тип локації:", reply_markup=kb)
-    await state.set_state(AddEventState.venue_type)
-
-@dp.callback_query(AddEventState.venue_type, F.data.startswith("venue_"))
-async def add_ev_venue_type(callback: CallbackQuery, state: FSMContext):
-    venue_type = callback.data.replace("venue_", "") 
-    await state.update_data(venue_type=venue_type)
-    await callback.message.edit_text("Тепер введи точне місце проведення текстом:")
-    await state.set_state(AddEventState.location)
-
-@dp.message(AddEventState.location)
-async def add_ev_location(message: Message, state: FSMContext):
-    await state.update_data(location=message.text)
-    await message.answer("Введіть загальну кількість квитків на подію (тільки число):")
-    await state.set_state(AddEventState.total_tickets)
-
-@dp.message(AddEventState.total_tickets)
-async def add_ev_tickets(message: Message, state: FSMContext):
-    if not message.text.isdigit() or int(message.text) <= 0: 
-        return await message.answer("Введіть ціле додатнє число (більше нуля)!")
-    await state.update_data(total_tickets=int(message.text))
-    
+async def ask_about_price(message: Message, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Безкоштовна", callback_data="ev_free")],
         [InlineKeyboardButton(text="Платна", callback_data="ev_paid")]
     ])
-    await message.answer("Яка це подія?", reply_markup=kb)
+    await message.answer("💰 <b>Яка це подія?</b>", reply_markup=kb, parse_mode="HTML")
     await state.set_state(AddEventState.is_free)
+
+# --- ПРОДОВЖЕННЯ ЛОГІКИ СТВОРЕННЯ ---
+@dp.message(AddEventState.total_tickets)
+async def add_ev_tickets(message: Message, state: FSMContext):
+    if not message.text.isdigit() or int(message.text) <= 0: 
+        return await message.answer("Введіть ціле додатнє число (більше нуля)!")
+    
+    await state.update_data(total_tickets=int(message.text))
+    data = await state.get_data()
+
+    # Якщо це зал з картою — запитуємо про доступні місця
+    if data['venue_type'] in ['organ_hall', 'assembly_hall']:
+        await message.answer(
+            "📍 <b>Налаштування доступних місць</b>\n\n"
+            "Введіть список дозволених місць через кому (напр: <code>12-1, 12-2, 12А-5</code>).\n\n"
+            "Або просто напиши <b>'Всі'</b>, щоб відкрити весь зал для вибору:",
+            parse_mode="HTML"
+        )
+        await state.set_state(AddEventState.available_seats)
+    else:
+        # Для звичайних івентів пропускаємо цей крок
+        await state.update_data(available_seats_list=None)
+        await ask_about_price(message, state)
+
+@dp.message(AddEventState.available_seats)
+async def add_ev_available_seats(message: Message, state: FSMContext):
+    val = message.text.strip()
+    if val.lower() in ['всі', 'все', 'all', '-', 'вси']:
+        await state.update_data(available_seats_list=None)
+    else:
+        # Зберігаємо рядок з місцями (напр. "1-1,1-2,12А-5")
+        await state.update_data(available_seats_list=val)
+    
+    await ask_about_price(message, state)
 
 @dp.callback_query(AddEventState.is_free, F.data.in_(["ev_free", "ev_paid"]))
 async def set_ev_type(callback: CallbackQuery, state: FSMContext):
@@ -1007,7 +989,6 @@ async def set_ev_type(callback: CallbackQuery, state: FSMContext):
     
     if is_free:
         await state.update_data(is_fixed_price=True, price="0", link="", card="", requires_confirmation=False)
-        await state.update_data(is_fixed_price=True, price="0", link="", card="")
         await callback.message.answer("Введіть фінальне повідомлення (напр. 'Забирай квиток в 218 кабінеті'):")
         await state.set_state(AddEventState.success_message)
     else:
@@ -1049,15 +1030,15 @@ async def add_ev_card(message: Message, state: FSMContext):
     await message.answer("Введіть фінальне повідомлення після підтвердження оплати:")
     await state.set_state(AddEventState.success_message)
 
-
-
 @dp.message(AddEventState.success_message)
 async def add_ev_final(message: Message, state: FSMContext):
     d = await state.get_data()
+    # 🌟 Додаємо d.get('available_seats_list') як останній аргумент
     await db.add_event(
         d['title'], d['desc'], d['photo_id'], d['dt'], d['venue_type'], 
         d['location'], d['total_tickets'], d['is_free'], d['price'], 
         d.get('link', ''), d.get('card', ''), message.text, 
+        d.get('available_seats_list')
     )
     await message.answer("✅ Подію успішно додано!", reply_markup=main_kb(message.from_user.id))
     await state.clear()

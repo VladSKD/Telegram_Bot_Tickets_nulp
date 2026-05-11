@@ -34,6 +34,7 @@ class AddEventState(StatesGroup):
     bank_link = State()
     card_number = State()
     requires_confirmation = State() 
+    available_seats = State() # Новий стан
     success_message = State()
     
 class AdminDelete(StatesGroup):

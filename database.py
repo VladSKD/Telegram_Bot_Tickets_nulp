@@ -61,6 +61,8 @@ class Database:
             )
         """)
 
+
+
     async def update_order_paid_amount(self, order_id, amount_uah):
         # Тепер зберігаємо суму з копійками
         await self.pool.execute(
@@ -115,12 +117,12 @@ class Database:
         """
         await self.pool.execute(query, tg_id, username, first_name, last_name, institute, group)
 
-    async def add_event(self, title, desc, photo_id, dt, venue_type, location, total_tickets, is_free, price, link, card, success_message, requires_confirmation=True):
+    async def add_event(self, title, desc, photo_id, dt, venue_type, location, total_tickets, is_free, price, link, card, success_message, available_seats=None):
         query = """
-        INSERT INTO events (title, description, photo_id, date_time, venue_type, location, total_tickets, is_free, price, bank_link, card_number, success_message, requires_confirmation) 
+        INSERT INTO events (title, description, photo_id, date_time, venue_type, location, total_tickets, is_free, price, bank_link, card_number, success_message, available_seats_list) 
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         """
-        await self.pool.execute(query, title, desc, photo_id, dt, venue_type, location, total_tickets, is_free, price, link, card, success_message, requires_confirmation)
+        await self.pool.execute(query, title, desc, photo_id, dt, venue_type, location, total_tickets, is_free, price, link, card, success_message, available_seats)
         
     async def get_event(self, event_id):
         query = """
@@ -238,9 +240,22 @@ class Database:
 
     async def mark_transaction_processed(self, tx_id: str):
         await self.pool.execute("INSERT INTO processed_transactions (tx_id) VALUES ($1) ON CONFLICT DO NOTHING", tx_id)
+     
+    def get_full_hall_config(self, venue_type):
+        all_ids = []
+        if venue_type == 'organ_hall':
+            rows = ['24','23','22','21','20','19','18','17','16','15','14','13','12Б','12А','12','11','10','9','8','7','6','5Б','5А','5','4','3','2','1']
+            for r in rows:
+                count = 6 if r in ['13','12Б','12А','12','11','10','9','8','7','6','5Б','5А','5','4','3','2','1'] else 3
+                for s in range(1, (count * 2) + 1):
+                    all_ids.append(f"{r}-{s}")
+        return all_ids 
         
     async def get_occupied_seats(self, event_id):
-        # 1. Місця з бази (вже оплачені або в броні бота)
+        event = await self.get_event(event_id)
+        if not event: return []
+        
+        # Тут await потрібен, бо pool.fetch - асинхронний
         query = "SELECT file_id FROM orders WHERE event_id = $1 AND status IN ('confirmed', 'pending')"
         rows = await self.pool.fetch(query, event_id)
         
@@ -249,14 +264,19 @@ class Database:
             if row['file_id']:
                 db_seats.extend(row['file_id'].split(','))
         
-        # 2. Отримуємо івент, щоб знати venue_type
-        event = await self.get_event(event_id)
-        if not event: return db_seats
-        
-        # ПЕРЕДАЄМО тип залу у sheets 👈
+        # Тут await потрібен, бо sheets.get_occupied_from_sheet - асинхронний
         sheet_seats = await sheets.get_occupied_from_sheet(event['title'], event['venue_type'])
-        
-        return list(set(db_seats + sheet_seats))
+        occupied = list(set(db_seats + sheet_seats))
+
+        if event.get('available_seats_list'):
+            allowed = [s.strip() for s in event['available_seats_list'].split(',')]
+            # Тут НЕ треба await, бо get_full_hall_config - звичайна функція (без async)
+            full_hall = self.get_full_hall_config(event['venue_type'])
+            
+            restricted = [s for s in full_hall if s not in allowed]
+            occupied = list(set(occupied + restricted))
+            
+        return occupied
 
     async def add_order(self, user_id, event_id, count, file_id, f_type):
         # file_id тепер зберігатиме список типу "A-2-5,B-4-10"
