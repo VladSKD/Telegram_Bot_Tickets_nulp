@@ -1387,14 +1387,18 @@ async def admin_manage_hall_list(callback: CallbackQuery):
     
     await callback.message.edit_text("<b>Оберіть подію для керуванням розсадкою:</b>", reply_markup=kb, parse_mode="HTML")
 
-dp.callback_query(F.data.startswith("adm_hall_"))
+@dp.callback_query(F.data.startswith("adm_hall_"))
 async def open_admin_hall(callback: CallbackQuery):
     event_id = int(callback.data.split("_")[2])
-    event = await db.get_event(event_id) # Отримуємо подію, щоб знати тип залу
+    event = await db.get_event(event_id)
     occ_list = await db.get_occupied_seats(event_id)
     occ_str = ",".join(occ_list)
     
-    base_url = "telegram-bot-tickets-nulp-gwfu.vercel.app" if event['venue_type'] == 'assembly_hall' else "https://telegram-bot-tickets-nulp.vercel.app"
+    # 🌟 Додано https:// для Актової зали
+    if event['venue_type'] == 'assembly_hall':
+        base_url = "https://telegram-bot-tickets-nulp-gwfu.vercel.app"
+    else:
+        base_url = "https://telegram-bot-tickets-nulp.vercel.app"
     
     web_app_url = f"{base_url}/?occ={occ_str}&admin=true&ev_id={event_id}&t={int(time.time())}"
     
@@ -1403,7 +1407,9 @@ async def open_admin_hall(callback: CallbackQuery):
         resize_keyboard=True,
         one_time_keyboard=True
     )
-    await callback.message.answer(f"Карта для {event['title']} готова 👇", reply_markup=kb)
+    
+    await callback.message.answer(f"Карта для <b>{event['title']}</b> готова 👇", reply_markup=kb, parse_mode="HTML")
+    await callback.answer() # Закриваємо "годинничок" на кнопці
 
 # У main.py знайди perform_adm_cancel і онови її:
 
