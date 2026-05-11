@@ -81,14 +81,15 @@ def _add_order(event_title, order_id, last_name, first_name, username, institute
         tg = f"@{username}" if username != "-" else "-"
         
         if venue_type in ['organ_hall', 'assembly_hall']:
-            # 10 колонок для залів
             row_v, seat_v = "-", "-"
-            match = re.search(r'Р(\d+)М(\d+)', status)
+            # 🌟 ОНОВЛЕНИЙ REGEX: додано [0-9А-Яа-я], щоб розуміти ряди 12А, 5Б тощо
+            match = re.search(r'Р([0-9А-Яа-я]+)М(\d+)', status)
             if match:
                 row_v, seat_v = match.group(1), match.group(2)
-            ws.append_row([order_id, last_name, first_name, tg, institute, "-", row_v, seat_v, status, "Ні"])
+            
+            # 🌟 ЗАМІСТЬ "-" СТАВИМО group (це буде наш сектор)
+            ws.append_row([order_id, last_name, first_name, tg, institute, group, row_v, seat_v, status, "Ні"])
         else:
-            # 8 колонок для звичайних подій (як твій приклад з Богданом)
             ws.append_row([order_id, last_name, first_name, tg, institute, group, qty, status])
     except Exception as e:
         print(f"❌ Помилка запису замовлення: {e}")

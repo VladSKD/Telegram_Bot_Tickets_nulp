@@ -561,22 +561,27 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
         await db.update_order_status(order_id, "confirmed")
         
         if is_organ:
-            # 1. Записуємо замовника
             buyer_seat = seats[0]
+            # Беремо зону з об'єкта місця (вона там є завдяки нашому парсеру в handle_web_app_data)
+            zone_v = buyer_seat.get('zone', 'Партер') 
+            
             status_buyer = f"Підтверджено (Р{buyer_seat['row']}М{buyer_seat['seat']})"
+            
+            # Передаємо zone_v замість user['student_group']
             await sheets.add_order_to_sheet(
                 event['title'], order_id, user['last_name'], user['first_name'], 
-                username, user['institute'], user['student_group'], 
-                1, status_buyer, event['venue_type']
+                username, user['institute'], zone_v, 1, status_buyer, event['venue_type']
             )
             
-            # 2. Записуємо друзів
             for i, friend_info in enumerate(friends):
                 f_seat = seats[i+1]
+                f_zone = f_seat.get('zone', 'Партер')
                 status_friend = f"Підтверджено (Р{f_seat['row']}М{f_seat['seat']})"
+                
+                # Тут теж передаємо зону
                 await sheets.add_order_to_sheet(
                     event['title'], order_id, "Друг", friend_info, "-", "Гість", 
-                    f"від @{username}", 1, status_friend, event['venue_type']
+                    f_zone, 1, status_friend, event['venue_type']
                 )
             
             formatted_seats = "\n".join([f"📍 Ряд: <b>{s['row']}</b>, Місце: <b>{s['seat']}</b>" for s in seats])
