@@ -1166,10 +1166,20 @@ async def add_ev_card(message: Message, state: FSMContext):
 @dp.message(AddEventState.success_message)
 async def add_ev_final(message: Message, state: FSMContext):
     d = await state.get_data()
+    
+    # ПЕРЕТВОРЮЄМО СПИСОК МІСЦЬ У РЯДОК ДЛЯ БАЗИ
+    seats_data = d.get('selected_seats')
+    available_seats_str = None
+    if isinstance(seats_data, list):
+        available_seats_str = ",".join(seats_data)
+    elif seats_data == "all":
+        available_seats_str = None # Або можна лишити порожнім
+        
     await db.add_event(
         d['title'], d['desc'], d['photo_id'], d['dt'], d['venue_type'], 
         d['location'], d['total_tickets'], d['is_free'], d['price'], 
-        d.get('link', ''), d.get('card', ''), message.text, 
+        d.get('link', ''), d.get('card', ''), message.text,
+        available_seats_str  # ТУТ МАЄ БУТИ 13-Й АРГУМЕНТ!
     )
     await message.answer("✅ Подію успішно додано!", reply_markup=main_kb(message.from_user.id))
     await state.clear()

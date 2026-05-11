@@ -32,6 +32,13 @@ class Database:
             )
         """)
         
+        self.pool = await asyncpg.create_pool(
+            os.getenv("DATABASE_URL"),
+            statement_cache_size=0,
+            max_prepared_statement_size=0
+        )
+        
+        
         # --- ДОДАЄМО КОЛОНКУ ДЛЯ АВТОПІДТВЕРДЖЕННЯ ---
         try:
             await self.pool.execute("ALTER TABLE events ADD COLUMN requires_confirmation BOOLEAN DEFAULT TRUE;")
