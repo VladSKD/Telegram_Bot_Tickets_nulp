@@ -34,8 +34,8 @@ class Database:
         
         self.pool = await asyncpg.create_pool(
             os.getenv("DATABASE_URL"),
-            statement_cache_size=0,
-            max_prepared_statement_size=0
+            statement_cache_size=0,           # Вимикаємо кешування планів
+            max_cacheable_statement_size=0    # Виправляємо назву аргументу тут
         )
         
         
