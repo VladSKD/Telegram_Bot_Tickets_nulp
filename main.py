@@ -682,14 +682,25 @@ async def handle_web_app_data(message: Message, state: FSMContext):
         return await message.answer("⚠️ Помилка: Дані не отримано.", parse_mode="HTML")
 
     # 🌟 ЛОГІКА АДМІНА
+    # 🌟 ЛОГІКА АДМІНА
     if raw_data.startswith("admin_seat|"):
-        # Формат: admin_seat|event_id|Зона-Ряд-Місце
+        # Формат може бути: admin_seat|event_id|Зона-Ряд-Місце 
+        # Або для Органного: admin_seat|event_id|Ряд-Місце
         _, ev_id_str, full_id = raw_data.split("|")
-        # Розбиваємо новий ID (Зона-Ряд-Місце)
-        id_parts = full_id.split('-')
-        zone, row, seat = id_parts[0], id_parts[1], id_parts[2]
         
-        info = await db.get_seat_info(int(ev_id_str), row, seat) # Тут логіка залежить від твоєї БД
+        id_parts = full_id.split('-')
+        
+        # Перевіряємо кількість елементів у ID місця
+        if len(id_parts) == 3:
+            # Якщо частин три — це Актова зала (Зона-Ряд-Місце)
+            zone, row, seat = id_parts[0], id_parts[1], id_parts[2]
+        else:
+            # Якщо частин дві — це Органний зал (Ряд-Місце)
+            # Встановлюємо дефолтну зону, щоб код не падав далі
+            zone, row, seat = "Партер", id_parts[0], id_parts[1]
+        
+        # Тепер викликаємо отримання інфо з уже визначеними row та seat
+        info = await db.get_seat_info(int(ev_id_str), row, seat) 
         if not info:
             return await message.answer(f"ℹ️ Місце {full_id} не знайдено або вже вільне.")
             
@@ -711,42 +722,51 @@ async def handle_web_app_data(message: Message, state: FSMContext):
         return await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
     # 🌟 ЛОГІКА ПОКУПЦЯ
+    # 🌟 ЛОГІКА ПОКУПЦЯ
     try:
         selected_seats = []
         seat_items = raw_data.split('|')
         
         for item in seat_items:
-            # Парсимо новий формат: Зона-Ряд-Місце
             parts = item.split('-')
-            if len(parts) != 3:
+            
+            # Гнучкий парсинг: підтримуємо і 2, і 3 елементи
+            if len(parts) == 3:
+                # Формат Актової зали: Зона-Ряд-Місце
+                selected_seats.append({
+                    'id': item,
+                    'zone': parts[0],
+                    'row': parts[1],
+                    'seat': parts[2]
+                })
+            elif len(parts) == 2:
+                # Формат Органного залу: Ряд-Місце
+                selected_seats.append({
+                    'id': item,
+                    'zone': 'Партер', # Дефолтне значення для Органного
+                    'row': parts[0],
+                    'seat': parts[1]
+                })
+            else:
                 continue
                 
-            selected_seats.append({
-                'id': item,
-                'zone': parts[0],
-                'row': parts[1],
-                'seat': parts[2]
-            })
-            
         qty = len(selected_seats)
         if qty == 0:
             return await message.answer("⚠️ Не обрано жодного місця.")
 
-        # Зберігаємо дані у стан ОДИН РАЗ
+        # Решта логіки залишається без змін
         await state.update_data(qty=qty, selected_seats=selected_seats)
         
         if qty == 1:
-            # Для одного квитка — одразу на оплату
             await process_order_payment(message, state, is_organ=True)
         else:
-            # Для кількох — збираємо дані друзів
             await state.update_data(total_friends=qty-1, current_friend=1, friends=[])
             await message.answer(
                 f"👥 Оскільки ти береш {qty} квитків, нам потрібні дані твоїх друзів.\n\n"
                 f"Введи Прізвище, Ім'я та @тег для <b>1-го друга</b>:", 
                 parse_mode="HTML"
             )
-            await state.set_state(OrderState.waiting_for_friend_data) #[cite: 4]
+            await state.set_state(OrderState.waiting_for_friend_data)
             
     except Exception as e:
         await message.answer(f"⚠️ Помилка обробки даних: {e}")
