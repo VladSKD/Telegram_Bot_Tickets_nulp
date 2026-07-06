@@ -1546,7 +1546,6 @@ async def main():
     if banned_users:
         BLACKLIST_CACHE.update(banned_users)
     asyncio.create_task(start_webhook())
-    asyncio.create_task(check_expired_bookings()) # 👈 ЗАПУСК ТАЙМЕРА
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
