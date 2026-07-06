@@ -170,11 +170,17 @@ dp = Dispatcher()
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x]
 
 # --- MIDDLEWARE ДЛЯ ЧОРНОГО СПИСКУ ---
+
+
+BLACKLIST_CACHE = set() 
+
+
 class BlacklistMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
         user = event.from_user
         if user and user.username:
-            if await db.is_blacklisted(user.username):
+            # Перевіряємо миттєво в оперативній пам'яті ⚡️
+            if user.username in BLACKLIST_CACHE:
                 if isinstance(event, Message):
                     await event.answer("🚫 Ви заблоковані адміністрацією і не можете користуватися ботом.")
                 elif isinstance(event, CallbackQuery):
@@ -669,39 +675,6 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
         await message.answer(text, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=True)
         await state.clear()
         
-
-
-
-async def check_expired_bookings():
-    """Фонова задача для скасування старих броней"""
-    while True:
-        try:
-            # Отримуємо замовлення, які в статусі 'pending' більше 10 хвилин
-            # (Для цього треба додати колонку created_at у таблицю orders)
-            expired_orders = await db.pool.fetch(
-                "SELECT id, event_id, file_id FROM orders WHERE status = 'pending' AND created_at < $1",
-                datetime.now() - timedelta(minutes=10)
-            )
-            
-            for order in expired_orders:
-                # 1. Скасовуємо в БД
-                await db.update_order_status(order['id'], 'cancelled')
-                
-                # 2. Отримуємо інфу про подію для Google Sheets
-                event = await db.get_event(order['event_id'])
-                
-                # 3. Видаляємо позначку в таблиці (якщо ти робив запис текстом)
-                if order['file_id']:
-                    for seat in order['file_id'].split(','):
-                        # Логіка очищення клітинки в Excel (опціонально)
-                        pass
-                
-                print(f"⏰ Бронь замовлення #{order['id']} скасована за таймаутом.")
-                
-        except Exception as e:
-            print(f"❌ Помилка в таймері броней: {e}")
-            
-        await asyncio.sleep(60) # Перевірка щохвилини
 
 
 @dp.message(F.web_app_data)
@@ -1569,6 +1542,9 @@ async def perform_adm_cancel(callback: CallbackQuery):
 
 async def main():
     await db.connect()
+    banned_users = await db.get_blacklist()
+    if banned_users:
+        BLACKLIST_CACHE.update(banned_users)
     asyncio.create_task(start_webhook())
     asyncio.create_task(check_expired_bookings()) # 👈 ЗАПУСК ТАЙМЕРА
     await dp.start_polling(bot)
