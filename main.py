@@ -681,48 +681,41 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
 async def handle_web_app_data(message: Message, state: FSMContext):
     raw_data = message.web_app_data.data
     current_state = await state.get_state()
+    data = await state.get_data()
+
+    # Виводимо в консоль для зручного дебагу
+    print(f"📦 [WEB APP] Дані: {raw_data} | Стан: {current_state}")
 
     # --- НОВА ЛОГІКА: АДМІН СТВОРЮЄ ПОДІЮ ---
-    # ДОДАНО .state ОСЬ ТУТ 👇
-    if current_state == AddEventState.picking_seats.state:
+    # В Aiogram 3 get_state() повертає саме такий рядок
+    if current_state == "AddEventState:picking_seats":
         if not raw_data or raw_data == "null":
             return await message.answer("⚠️ Місця не обрано.")
             
-        # Парсимо обрані місця (вони приходять через | )
         seat_ids = raw_data.split('|')
         qty = len(seat_ids)
         
-        # Зберігаємо список ID місць (напр. ["1-1", "1-2"])
         await state.update_data(selected_seats=seat_ids, total_tickets=qty)
         
         await message.answer(
             f"✅ Обрано <b>{qty}</b> місць для продажу.\n\n"
             f"Тепер введи точну назву локації (напр. 'Органний зал, центральний вхід'):",
-            reply_markup=ReplyKeyboardRemove(), # Прибираємо кнопку WebApp
+            reply_markup=ReplyKeyboardRemove(),
             parse_mode="HTML"
         )
         await state.set_state(AddEventState.location)
-        return # Виходимо, щоб не спрацювала логіка купівлі
+        return
 
-    # 🌟 ЛОГІКА АДМІНА
-    # 🌟 ЛОГІКА АДМІНА
+    # 🌟 ЛОГІКА АДМІНА (ДІЗНАТИСЯ ІНФО)
     if raw_data.startswith("admin_seat|"):
-        # Формат може бути: admin_seat|event_id|Зона-Ряд-Місце 
-        # Або для Органного: admin_seat|event_id|Ряд-Місце
         _, ev_id_str, full_id = raw_data.split("|")
-        
         id_parts = full_id.split('-')
         
-        # Перевіряємо кількість елементів у ID місця
         if len(id_parts) == 3:
-            # Якщо частин три — це Актова зала (Зона-Ряд-Місце)
             zone, row, seat = id_parts[0], id_parts[1], id_parts[2]
         else:
-            # Якщо частин дві — це Органний зал (Ряд-Місце)
-            # Встановлюємо дефолтну зону, щоб код не падав далі
             zone, row, seat = "Партер", id_parts[0], id_parts[1]
         
-        # Тепер викликаємо отримання інфо з уже визначеними row та seat
         info = await db.get_seat_info(int(ev_id_str), row, seat) 
         if not info:
             return await message.answer(f"ℹ️ Місце {full_id} не знайдено або вже вільне.")
@@ -737,47 +730,31 @@ async def handle_web_app_data(message: Message, state: FSMContext):
             f"👤 <b>Покупець:</b> {info['first_name']} {info['last_name']} ({username})\n"
             f"📦 <b>ID Замовлення:</b> #{info['order_id']}"
         )
-        
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Скасувати цей квиток", 
-                                  callback_data=f"adm_cancel_{info['order_id']}_{row}_{seat}")]
+            [InlineKeyboardButton(text="❌ Скасувати цей квиток", callback_data=f"adm_cancel_{info['order_id']}_{row}_{seat}")]
         ])
         return await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
-    # 🌟 ЛОГІКА ПОКУПЦЯ
-    # 🌟 ЛОГІКА ПОКУПЦЯ
+    # 🌟 ЛОГІКА ПОКУПЦЯ (БРОНЮВАННЯ)
     try:
+        # ЗАХИСТ ВІД ПЕРЕЗАПУСКІВ: якщо ev_id немає, значить сесія злетіла
+        if not data.get('ev_id'):
+            return await message.answer("⚠️ Помилка: сесія застаріла (можливо, бот перезавантажився). Будь ласка, відкрий список подій і почни бронювання спочатку.", reply_markup=main_kb(message.from_user.id))
+
         selected_seats = []
         seat_items = raw_data.split('|')
         
         for item in seat_items:
             parts = item.split('-')
-            
-            # Гнучкий парсинг: підтримуємо і 2, і 3 елементи
             if len(parts) == 3:
-                # Формат Актової зали: Зона-Ряд-Місце
-                selected_seats.append({
-                    'id': item,
-                    'zone': parts[0],
-                    'row': parts[1],
-                    'seat': parts[2]
-                })
+                selected_seats.append({'id': item, 'zone': parts[0], 'row': parts[1], 'seat': parts[2]})
             elif len(parts) == 2:
-                # Формат Органного залу: Ряд-Місце
-                selected_seats.append({
-                    'id': item,
-                    'zone': 'Партер', # Дефолтне значення для Органного
-                    'row': parts[0],
-                    'seat': parts[1]
-                })
-            else:
-                continue
+                selected_seats.append({'id': item, 'zone': 'Партер', 'row': parts[0], 'seat': parts[1]})
                 
         qty = len(selected_seats)
         if qty == 0:
             return await message.answer("⚠️ Не обрано жодного місця.")
 
-        # Решта логіки залишається без змін
         await state.update_data(qty=qty, selected_seats=selected_seats)
         
         if qty == 1:
