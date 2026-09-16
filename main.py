@@ -995,7 +995,7 @@ async def seat_mode_select(callback: CallbackQuery, state: FSMContext):
         # Використовуємо WebApp для вибору місць, які будуть у продажу
         # Передаємо параметр mode=admin_setup (якщо ваш WebApp це підтримує) 
         # або просто відкриваємо порожню карту
-        web_app_url = "https://telegram-bot-tickets-nulp.vercel.app/?mode=admin_setup"
+        web_app_url = f"https://telegram-bot-tickets-nulp.vercel.app/?mode=admin_setup&t={int(time.time())}"
         
         kb = ReplyKeyboardMarkup(
             keyboard=[[
