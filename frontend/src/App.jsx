@@ -1,85 +1,40 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import './App.css';
 
 const tg = window.Telegram?.WebApp;
 
 function App() {
-  const [selectedSeats, setSelectedSeats] = useState([]);
-  const [occupiedSeats, setOccupiedSeats] = useState([]);
-  
-  // Додаємо стани для адмін-режиму
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [eventId, setEventId] = useState(null);
+  // Зчитуємо параметри з URL відразу
+  const queryParams = new URLSearchParams(window.location.search);
+  const initialOccupied = queryParams.get('occ') ? queryParams.get('occ').split(',') : [];
+  const isAdmin = queryParams.get('admin') === 'true';
+  const isSetupMode = queryParams.get('mode') === 'admin_setup';
+  const eventId = queryParams.get('ev_id');
 
-  const selectedSeatsRef = useRef(selectedSeats);
+  const [selectedSeats, setSelectedSeats] = useState([]);
+  const [occupiedSeats] = useState(initialOccupied);
 
   useEffect(() => {
-  selectedSeatsRef.current = selectedSeats;
-  
-  // Додано перевірку tg
-  if (tg && selectedSeats.length > 0) {
-    tg.MainButton.text = isAdmin 
-      ? `ДІЗНАТИСЯ ІНФО (Ряд ${selectedSeats[0].row}, Місце ${selectedSeats[0].seat})` 
-      : `🎟 КУПИТИ (${selectedSeats.length} шт.)`;
-    tg.MainButton.show();
-  } else if (tg) {
-    tg.MainButton.hide();
-  }
-}, [selectedSeats, isAdmin]);
-
-useEffect(() => {
-  // Додано перевірку tg
-  if (tg) {
-    tg.expand();
-    tg.ready();
-  }
-  
-  const queryParams = new URLSearchParams(window.location.search);
-  const occParam = queryParams.get('occ');
-  if (occParam) setOccupiedSeats(occParam.split(','));
-  
-  if (queryParams.get('admin') === 'true') setIsAdmin(true);
-  if (queryParams.get('ev_id')) setEventId(queryParams.get('ev_id'));
-
-  const handleMainButtonClick = () => {
-    const dataToSend = selectedSeatsRef.current;
-    if (dataToSend.length > 0) {
-      if (tg) { // Перевіряємо tg перед відправкою
-        if (isAdmin) {
-          tg.sendData(`admin_seat|${eventId}|${dataToSend[0].row}-${dataToSend[0].seat}`);
-        } else {
-          const dataString = dataToSend.map(s => `${s.row}-${s.seat}`).join('|');
-          tg.sendData(dataString);
-        }
-      } else {
-        console.log("Тестовий клік поза Telegram. Обрані місця:", dataToSend);
-      }
-    } else {
-      if (tg) tg.showAlert("Будь ласка, оберіть місця!");
+    if (tg) {
+      tg.expand();
+      tg.ready();
+      // Ховаємо системну кнопку Telegram, оскільки тепер у нас є своя на сайті
+      tg.MainButton.hide(); 
     }
-  };
-
-  if (tg) {
-    tg.MainButton.onClick(handleMainButtonClick);
-    return () => tg.MainButton.offClick(handleMainButtonClick);
-  }
-}, [isAdmin, eventId]);
+  }, []);
 
   const toggleSeat = (row, seatNum) => {
     const seatId = `${row}-${seatNum}`;
     const isOccupied = occupiedSeats.includes(seatId);
 
     if (isAdmin) {
-      // АДМІН: Може виділяти ТІЛЬКИ зайняті (червоні) місця і тільки по 1 штуці
+      // Адмін дізнається інфо: можна клікати ТІЛЬКИ по зайнятих місцях
       if (!isOccupied) return;
-      
-      setSelectedSeats(prev => {
-        // Якщо клікнули по вже виділеному — знімаємо виділення, інакше виділяємо нове
-        return prev.some(s => s.id === seatId) ? [] : [{ id: seatId, row, seat: seatNum }];
-      });
+      setSelectedSeats(prev => prev.some(s => s.id === seatId) ? [] : [{ id: seatId, row, seat: seatNum }]);
     } else {
-      // ПОКУПЕЦЬ: Блокуємо клік, якщо місце зайняте
-      if (isOccupied) return;
+      // Покупець АБО режим налаштування залу
+      // Блокуємо клік, тільки якщо це не режим налаштування і місце вже зайняте
+      if (!isSetupMode && isOccupied) return;
       
       setSelectedSeats(prev => {
         if (prev.some(s => s.id === seatId)) {
@@ -90,7 +45,22 @@ useEffect(() => {
     }
   };
 
-  
+  const handleActionClick = () => {
+    if (selectedSeats.length === 0) return;
+
+    if (tg && tg.sendData) {
+      if (isAdmin) {
+        tg.sendData(`admin_seat|${eventId}|${selectedSeats[0].row}-${selectedSeats[0].seat}`);
+      } else {
+        // Працює і для покупця, і для збереження місць адміном
+        const dataString = selectedSeats.map(s => `${s.row}-${s.seat}`).join('|');
+        tg.sendData(dataString);
+      }
+    } else {
+      // Тестовий режим для звичайного браузера
+      alert("Дані, які б відправились боту:\n" + selectedSeats.map(s => `${s.row}-${s.seat}`).join('|'));
+    }
+  };
 
   const hallConfig = [
     { row: '24', left: 3, right: 3 }, { row: '23', left: 3, right: 3 },
@@ -123,8 +93,6 @@ useEffect(() => {
 
       let className = 'seat available';
       if (isOccupied) className = 'seat occupied';
-      
-      // 👈 Важливо: додаємо клас selected, навіть якщо місце зайняте (для адміна)
       if (isSelected) className += ' selected';
 
       return (
@@ -132,8 +100,7 @@ useEffect(() => {
           key={seatId}
           className={className}
           onClick={() => toggleSeat(rowLabel, seatNum)}
-          // 👈 ОСЬ ТУТ БУВ БАГ: тепер кнопка активна для адміна, навіть якщо вона червона
-          disabled={!isAdmin && isOccupied}
+          disabled={(!isAdmin && !isSetupMode) && isOccupied}
         >
           {seatNum}
         </button>
@@ -141,9 +108,15 @@ useEffect(() => {
     });
   };
 
+  // Визначаємо текст кнопки залежно від режиму
+  let buttonText = "";
+  if (isSetupMode) buttonText = `✅ ЗБЕРЕГТИ МІСЦЯ (${selectedSeats.length} шт.)`;
+  else if (isAdmin && selectedSeats.length > 0) buttonText = `ДІЗНАТИСЯ ІНФО (Ряд ${selectedSeats[0].row}, Місце ${selectedSeats[0].seat})`;
+  else buttonText = `🎟 КУПИТИ (${selectedSeats.length} шт.)`;
+
   return (
     <div className={`hall-wrapper ${isAdmin ? 'admin-mode' : ''}`}>
-      <h2>Органний зал {isAdmin ? '(АДМІН)' : ''}</h2>
+      <h2>Органний зал {(isAdmin || isSetupMode) ? '(АДМІН)' : ''}</h2>
       
       <div className="hall-container">
         {hallConfig.map((item, index) => {
@@ -154,17 +127,13 @@ useEffect(() => {
           return (
             <div key={`row-${item.row}`} className="row-wrapper">
               <span className="row-label">{item.row}</span>
-              
               <div className="seats-group">
                 {renderSeats(item.left, item.row, 1)}
               </div>
-              
               <div className="center-aisle"></div>
-              
               <div className="seats-group">
                 {renderSeats(item.right, item.row, item.left + 1)}
               </div>
-              
               <span className="row-label">{item.row}</span>
             </div>
           );
@@ -181,6 +150,23 @@ useEffect(() => {
         <div className="legend-item"><span className="seat occupied legend-dot"></span> Зайняте</div>
         <div className="legend-item"><span className="seat selected legend-dot"></span> Обране</div>
       </div>
+
+      {/* НОВА ФІЗИЧНА КНОПКА, ЯКА ЗАВЖДИ ПРАЦЮЄ */}
+      {selectedSeats.length > 0 && (
+        <div style={{ position: 'sticky', bottom: '20px', marginTop: '25px', display: 'flex', justifyContent: 'center', zIndex: 1000 }}>
+          <button 
+            onClick={handleActionClick}
+            style={{
+              backgroundColor: '#3182ce', color: 'white', border: 'none', 
+              borderRadius: '12px', padding: '16px 30px', fontSize: '16px', 
+              fontWeight: 'bold', boxShadow: '0 4px 15px rgba(49, 130, 206, 0.4)',
+              cursor: 'pointer', width: '95%', maxWidth: '400px'
+            }}
+          >
+            {buttonText}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
