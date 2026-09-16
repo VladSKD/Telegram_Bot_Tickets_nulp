@@ -683,7 +683,8 @@ async def handle_web_app_data(message: Message, state: FSMContext):
     current_state = await state.get_state()
 
     # --- НОВА ЛОГІКА: АДМІН СТВОРЮЄ ПОДІЮ ---
-    if current_state == AddEventState.picking_seats:
+    # ДОДАНО .state ОСЬ ТУТ 👇
+    if current_state == AddEventState.picking_seats.state:
         if not raw_data or raw_data == "null":
             return await message.answer("⚠️ Місця не обрано.")
             
