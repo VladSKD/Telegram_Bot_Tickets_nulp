@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import './App.css';
 
-const tg = window.Telegram.WebApp;
+const tg = window.Telegram?.WebApp;
 
 function App() {
   const [selectedSeats, setSelectedSeats] = useState([]);
@@ -14,50 +14,56 @@ function App() {
   const selectedSeatsRef = useRef(selectedSeats);
 
   useEffect(() => {
-    selectedSeatsRef.current = selectedSeats;
-    
-    if (selectedSeats.length > 0) {
-      // Кнопка змінює текст залежно від режиму
-      tg.MainButton.text = isAdmin 
-        ? `ДІЗНАТИСЯ ІНФО (Ряд ${selectedSeats[0].row}, Місце ${selectedSeats[0].seat})` 
-        : `🎟 КУПИТИ (${selectedSeats.length} шт.)`;
-      tg.MainButton.show();
-    } else {
-      tg.MainButton.hide();
-    }
-  }, [selectedSeats, isAdmin]);
+  selectedSeatsRef.current = selectedSeats;
+  
+  // Додано перевірку tg
+  if (tg && selectedSeats.length > 0) {
+    tg.MainButton.text = isAdmin 
+      ? `ДІЗНАТИСЯ ІНФО (Ряд ${selectedSeats[0].row}, Місце ${selectedSeats[0].seat})` 
+      : `🎟 КУПИТИ (${selectedSeats.length} шт.)`;
+    tg.MainButton.show();
+  } else if (tg) {
+    tg.MainButton.hide();
+  }
+}, [selectedSeats, isAdmin]);
 
-  useEffect(() => {
+useEffect(() => {
+  // Додано перевірку tg
+  if (tg) {
     tg.expand();
     tg.ready();
-    
-    const queryParams = new URLSearchParams(window.location.search);
-    const occParam = queryParams.get('occ');
-    if (occParam) setOccupiedSeats(occParam.split(','));
-    
-    // Перевіряємо, чи це зайшов адмін
-    if (queryParams.get('admin') === 'true') setIsAdmin(true);
-    if (queryParams.get('ev_id')) setEventId(queryParams.get('ev_id'));
+  }
+  
+  const queryParams = new URLSearchParams(window.location.search);
+  const occParam = queryParams.get('occ');
+  if (occParam) setOccupiedSeats(occParam.split(','));
+  
+  if (queryParams.get('admin') === 'true') setIsAdmin(true);
+  if (queryParams.get('ev_id')) setEventId(queryParams.get('ev_id'));
 
-    const handleMainButtonClick = () => {
-      const dataToSend = selectedSeatsRef.current;
-      if (dataToSend.length > 0) {
+  const handleMainButtonClick = () => {
+    const dataToSend = selectedSeatsRef.current;
+    if (dataToSend.length > 0) {
+      if (tg) { // Перевіряємо tg перед відправкою
         if (isAdmin) {
-          // Відправляємо спеціальний код для адміна: admin_seat|ev_id|row-seat
           tg.sendData(`admin_seat|${eventId}|${dataToSend[0].row}-${dataToSend[0].seat}`);
         } else {
-          // Звичайний формат для покупця
           const dataString = dataToSend.map(s => `${s.row}-${s.seat}`).join('|');
           tg.sendData(dataString);
         }
       } else {
-        tg.showAlert("Будь ласка, оберіть місця!");
+        console.log("Тестовий клік поза Telegram. Обрані місця:", dataToSend);
       }
-    };
+    } else {
+      if (tg) tg.showAlert("Будь ласка, оберіть місця!");
+    }
+  };
 
+  if (tg) {
     tg.MainButton.onClick(handleMainButtonClick);
     return () => tg.MainButton.offClick(handleMainButtonClick);
-  }, [isAdmin, eventId]);
+  }
+}, [isAdmin, eventId]);
 
   const toggleSeat = (row, seatNum) => {
     const seatId = `${row}-${seatNum}`;
