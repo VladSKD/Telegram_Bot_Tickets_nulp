@@ -673,16 +673,17 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
                              f"📈 <b>Разом за {qty} шт:</b> від {total_required} грн")
 
         # --- НОВА ЛОГІКА: РОЗУМНЕ ПОСИЛАННЯ ---
-        base_link = event['bank_link'].strip()
+        # --- НОВА ЛОГІКА: РОЗУМНЕ ПОСИЛАННЯ ---
+        # Очищаємо від пробілів та зайвого слеша в кінці
+        base_link = event['bank_link'].strip().rstrip('/')
         
-        # Додаємо коментар. Перевіряємо, чи в посиланні вже є інші параметри (знак "?")
+        # Використовуємо параметр "t" для коментаря
         if "?" in base_link:
-            smart_link = f"{base_link}&text={payment_code}"
+            smart_link = f"{base_link}&t={payment_code}"
         else:
-            smart_link = f"{base_link}?text={payment_code}"
+            smart_link = f"{base_link}?t={payment_code}"
             
-        # 💡 БОНУС: Можна одразу підставити і суму до оплати! 
-        # (Монобанк приймає суму в копійках, тому множимо на 100)
+        # Додаємо суму в копійках
         smart_link += f"&a={int(total_required * 100)}"
         # --------------------------------------
 
@@ -690,10 +691,10 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
             f"📝 <b>Твоє замовлення:</b> {qty} шт.\n"
             f"{price_display}\n\n"
             f"💳 <b>Реквізити:</b>\n"
-            # Робимо посилання клікабельним красивим текстом
-            f"🔗 <b><a href='{smart_link}'>👉 ОПЛАТИТИ В 1 КЛІК 👈</a></b> <i>(Коментар та сума вставляться автоматично)</i>\n"
+            f"🔗 <b><a href='{smart_link}'>👉 ОПЛАТИТИ В 1 КЛІК 👈</a></b>\n"
+            f"<i>(Сума та коментар підставляться автоматично)</i>\n\n"
             f"🏦 Картка: <code>{event['card_number']}</code>\n\n"
-            f"⚠️ <b>Переконайся, що в коментарі залишився код:</b>\n"
+            f"⚠️ <b>Переконайся, що в коментарі є код:</b>\n"
             f"👉 <code>{payment_code}</code> 👈\n\n"
             f"<i>Бот автоматично підтвердить оплату за цим кодом.</i>"
         )
