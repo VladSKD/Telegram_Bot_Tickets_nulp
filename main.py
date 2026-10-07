@@ -124,22 +124,41 @@ async def mono_webhook(request):
 
 
 # --- РЕЄСТРАЦІЯ ВЕБХУКУ В МОНОБАНКУ ---
+# --- РЕЄСТРАЦІЯ ВЕБХУКУ В МОНОБАНКУ (ДЛЯ КІЛЬКОХ ТОКЕНІВ) ---
 async def setup_mono_webhook():
-    mono_token = os.getenv("MONO_TOKEN")
+    # 1. Збираємо всі токени, які є в змінних оточення
+    mono_tokens = []
+    if os.getenv("MONO_TOKEN"): 
+        mono_tokens.append(os.getenv("MONO_TOKEN"))
+    if os.getenv("MONO_TOKEN_2"): 
+        mono_tokens.append(os.getenv("MONO_TOKEN_2"))
+    # Якщо колись треба буде третій, просто додайте ще один if для "MONO_TOKEN_3"
+
     web_url = os.getenv("WEB_APP_URL")
-    if mono_token and web_url:
-        webhook_endpoint = f"{web_url.rstrip('/')}/mono"
-        headers = {"X-Token": mono_token}
-        payload = {"webHookUrl": webhook_endpoint}
-        async with aiohttp.ClientSession() as session:
+    
+    if not mono_tokens:
+        print("⚠️ Токени Монобанку не знайдені в Environment Variables.")
+        return
+        
+    if not web_url:
+        print("⚠️ Не вказано WEB_APP_URL.")
+        return
+
+    webhook_endpoint = f"{web_url.rstrip('/')}/mono"
+    
+    async with aiohttp.ClientSession() as session:
+        # Проходимося циклом по кожному токену і підключаємо вебхук
+        for index, token in enumerate(mono_tokens, start=1):
+            headers = {"X-Token": token}
+            payload = {"webHookUrl": webhook_endpoint}
             try:
                 async with session.post("https://api.monobank.ua/personal/webhook", headers=headers, json=payload) as resp:
                     if resp.status == 200:
-                        print(f"✅ Вебхук Монобанку успішно встановлено на {webhook_endpoint}")
+                        print(f"✅ Вебхук Монобанку для токена #{index} успішно встановлено!")
                     else:
-                        print(f"⚠️ Помилка встановлення вебхуку: {await resp.text()}")
+                        print(f"⚠️ Помилка встановлення вебхуку для токена #{index}: {await resp.text()}")
             except Exception as e:
-                print(f"⚠️ Не вдалося підключитися до Монобанку: {e}")
+                print(f"⚠️ Не вдалося підключитися до Монобанку (токен #{index}): {e}")
 
 async def start_webhook():
     app = web.Application()
