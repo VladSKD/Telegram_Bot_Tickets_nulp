@@ -672,17 +672,31 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
             price_display = (f"💵 <b>Умова:</b> {price_str} за один квиток.\n"
                              f"📈 <b>Разом за {qty} шт:</b> від {total_required} грн")
 
+        # --- НОВА ЛОГІКА: РОЗУМНЕ ПОСИЛАННЯ ---
+        base_link = event['bank_link'].strip()
+        
+        # Додаємо коментар. Перевіряємо, чи в посиланні вже є інші параметри (знак "?")
+        if "?" in base_link:
+            smart_link = f"{base_link}&text={payment_code}"
+        else:
+            smart_link = f"{base_link}?text={payment_code}"
+            
+        # 💡 БОНУС: Можна одразу підставити і суму до оплати! 
+        # (Монобанк приймає суму в копійках, тому множимо на 100)
+        smart_link += f"&a={int(total_required * 100)}"
+        # --------------------------------------
+
         text = (
             f"📝 <b>Твоє замовлення:</b> {qty} шт.\n"
             f"{price_display}\n\n"
             f"💳 <b>Реквізити:</b>\n"
-            f"🔗 Банка: {event['bank_link']}\n"
+            # Робимо посилання клікабельним красивим текстом
+            f"🔗 <b><a href='{smart_link}'>👉 ОПЛАТИТИ В 1 КЛІК 👈</a></b> <i>(Коментар та сума вставляться автоматично)</i>\n"
             f"🏦 Картка: <code>{event['card_number']}</code>\n\n"
-            f"⚠️ <b>ОБОВ'ЯЗКОВО вкажи код у коментарі:</b>\n"
+            f"⚠️ <b>Переконайся, що в коментарі залишився код:</b>\n"
             f"👉 <code>{payment_code}</code> 👈\n\n"
-            f"<i>Бот автоматично підсумує всі твої платежі з цим кодом.</i>"
+            f"<i>Бот автоматично підтвердить оплату за цим кодом.</i>"
         )
-        
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📸 Я забув вказати код (надіслати скрін)", callback_data=f"forgot_{order_id}")]
         ])
