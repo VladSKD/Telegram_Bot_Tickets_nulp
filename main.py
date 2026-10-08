@@ -696,7 +696,7 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
             f"<i>Бот автоматично підтвердить оплату за цим кодом.</i>"
         )
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📸 Я забув вказати код (надіслати скрін)", callback_data=f"forgot_{order_id}")]
+            [InlineKeyboardButton(text="📸 Надіслати підтвердження оплати вручну", callback_data=f"forgot_{order_id}")]
         ])
         
 
