@@ -674,6 +674,7 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
 
         # --- НОВА ЛОГІКА: РОЗУМНЕ ПОСИЛАННЯ ---
         # --- НОВА ЛОГІКА: РОЗУМНЕ ПОСИЛАННЯ ---
+        # --- НОВА ЛОГІКА: РОЗУМНЕ ПОСИЛАННЯ ---
         # Очищаємо від пробілів та зайвого слеша в кінці
         base_link = event['bank_link'].strip().rstrip('/')
         
@@ -682,19 +683,15 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
             smart_link = f"{base_link}&t={payment_code}"
         else:
             smart_link = f"{base_link}?t={payment_code}"
-            
-        # Додаємо суму в копійках
-        smart_link += f"&a={int(total_required * 100)}"
         # --------------------------------------
 
         text = (
             f"📝 <b>Твоє замовлення:</b> {qty} шт.\n"
             f"{price_display}\n\n"
             f"💳 <b>Реквізити:</b>\n"
-            f"🔗 <b><a href='{smart_link}'>👉 ОПЛАТИТИ В 1 КЛІК 👈</a></b>\n"
-            f"<i>(Сума та коментар підставляться автоматично)</i>\n\n"
+            f"🔗 <b><a href='{smart_link}'>👉 ПЕРЕЙТИ ДО ОПЛАТИ 👈</a></b>\n"
             f"🏦 Картка: <code>{event['card_number']}</code>\n\n"
-            f"⚠️ <b>Переконайся, що в коментарі є код:</b>\n"
+            f"⚠️ <b>Переконайся, що в коментарі залишився код:</b>\n"
             f"👉 <code>{payment_code}</code> 👈\n\n"
             f"<i>Бот автоматично підтвердить оплату за цим кодом.</i>"
         )
