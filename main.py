@@ -21,6 +21,8 @@ import aiohttp
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder  # Окремий пакет для білдерів
+import logging
+logging.basicConfig(level=logging.INFO)
 
 async def handle(request):
     return web.Response(text="Bot is alive!")
