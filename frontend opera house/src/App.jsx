@@ -1,220 +1,267 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import './App.css';
 
-const tg = window.Telegram.WebApp;
+export default function App() {
+  const [seats, setSeats] = useState([]);
+  const [currentZone, setCurrentZone] = useState('Партер');
+  
+  // Встановлюємо оригінальні розміри полотна Контрамарки за замовчуванням
+  const [baseSize] = useState({ width: 4600, height: 3481 }); 
+  const containerRef = useRef(null);
+  const fileInputRef = useRef(null);
 
-function App() {
-  const [selectedSeats, setSelectedSeats] = useState([]);
-  const [occupiedSeats, setOccupiedSeats] = useState([]);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [eventId, setEventId] = useState(null);
-
-  const selectedSeatsRef = useRef(selectedSeats);
-
-  useEffect(() => {
-    selectedSeatsRef.current = selectedSeats;
-    if (selectedSeats.length > 0) {
-      tg.MainButton.text = isAdmin 
-        ? `ДІЗНАТИСЯ ІНФО (${selectedSeats[0].id})` 
-        : `🎟 КУПИТИ (${selectedSeats.length} шт.)`;
-      tg.MainButton.show();
-    } else {
-      tg.MainButton.hide();
-    }
-  }, [selectedSeats, isAdmin]);
-
-  useEffect(() => {
-    tg.expand();
-    tg.ready();
+  const handleContainerClick = (e) => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
     
-    const queryParams = new URLSearchParams(window.location.search);
-    const occParam = queryParams.get('occ');
-    if (occParam) setOccupiedSeats(occParam.split(','));
-    
-    if (queryParams.get('admin') === 'true') setIsAdmin(true);
-    if (queryParams.get('ev_id')) setEventId(queryParams.get('ev_id'));
+    // Вираховуємо коефіцієнт масштабування між реальним розміром div та внутрішнім viewBox
+    const scaleX = baseSize.width / rect.width;
+    const scaleY = baseSize.height / rect.height;
 
-    const handleMainButtonClick = () => {
-      const dataToSend = selectedSeatsRef.current;
-      if (dataToSend.length > 0) {
-        if (isAdmin) {
-          tg.sendData(`admin_seat|${eventId}|${dataToSend[0].id}`);
-        } else {
-          const dataString = dataToSend.map(s => s.id).join('|');
-          tg.sendData(dataString);
-        }
-      } else {
-        tg.showAlert("Будь ласка, оберіть місця!");
-      }
+    // Переводимо координати кліку в абсолютні координати 4600x3481
+    const x = Math.round((e.clientX - rect.left) * scaleX);
+    const y = Math.round((e.clientY - rect.top) * scaleY);
+
+    const newSeat = {
+      id: `manual-${currentZone}-${Date.now()}`,
+      cx: x,
+      cy: y,
+      zone: currentZone,
+      type: 'manual', 
+      status: 'available'
     };
 
-    tg.MainButton.onClick(handleMainButtonClick);
-    return () => tg.MainButton.offClick(handleMainButtonClick);
-  }, [isAdmin, eventId]);
+    setSeats([...seats, newSeat]);
+  };
 
-  const toggleSeat = (zone, rowOrBox, seatNum) => {
-    const seatId = `${zone}-${rowOrBox}-${seatNum}`;
-    const isOccupied = occupiedSeats.includes(seatId);
+  const handleDotClick = (e, idToRemove) => {
+    e.stopPropagation();
+    setSeats(seats.filter(seat => seat.id !== idToRemove));
+  };
 
-    if (isAdmin) {
-      if (!isOccupied) return;
-      setSelectedSeats(prev => prev.some(s => s.id === seatId) ? [] : [{ id: seatId, zone, row: rowOrBox, seat: seatNum }]);
-    } else {
-      if (isOccupied) return;
-      setSelectedSeats(prev => {
-        if (prev.some(s => s.id === seatId)) return prev.filter(s => s.id !== seatId);
-        return [...prev, { id: seatId, zone, row: rowOrBox, seat: seatNum }];
-      });
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(JSON.stringify(seats, null, 2));
+    alert('Масив координат скопійовано в буфер обміну!');
+  };
+
+  const undoLast = () => {
+    setSeats(seats.slice(0, -1));
+  };
+
+  const clearAll = () => {
+    if (window.confirm('Ви впевнені, що хочете видалити всі місця?')) {
+      setSeats([]);
     }
   };
 
-  const renderSeats = (zone, rowOrBox, seatCount, startFrom = 1) => {
-    return Array.from({ length: seatCount }).map((_, i) => {
-      const seatNum = startFrom + i;
-      const seatId = `${zone}-${rowOrBox}-${seatNum}`;
-      const isOccupied = occupiedSeats.includes(seatId);
-      const isSelected = selectedSeats.some(s => s.id === seatId);
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
 
-      let className = `seat ${isOccupied ? 'occupied' : 'available'}`;
-      if (isSelected) className += ' selected';
-      if (zone === 'Ложа Л' || zone === 'Ложа П') className += ' box-seat';
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const parsedData = JSON.parse(event.target.result);
+        
+        // ВАРІАНТ 1: Це оригінальний "сирий" файл Контрамарки (kpnta.json)
+        if (parsedData.data && parsedData.data.sectors) {
+          let extractedSeats = [];
+          parsedData.data.sectors.forEach((sector, sIdx) => {
+            const sectorName = sector.name || 'Unknown';
+            (sector.rows || []).forEach((row, rIdx) => {
+              const rowNum = row.number || '';
+              (row.places || []).forEach((place, pIdx) => {
+                extractedSeats.push({
+                  id: `kontra-raw-${sIdx}-${rIdx}-${pIdx}`,
+                  cx: place.x,
+                  cy: place.y,
+                  zone: sectorName,
+                  row: rowNum,
+                  seatNum: place.number,
+                  type: 'kontramarka', 
+                  status: 'available'
+                });
+              });
+            });
+          });
+          setSeats(extractedSeats);
+          alert(`Успішно завантажено ${extractedSeats.length} місць з оригінального файлу!`);
+        } 
+        // ВАРІАНТ 2: Це масив (наш спрощений файл або старий бекап)
+        else if (Array.isArray(parsedData)) {
+          if (parsedData.length > 0 && parsedData[0].hasOwnProperty('sector') && parsedData[0].hasOwnProperty('x')) {
+            const convertedSeats = parsedData.map((item, index) => ({
+              id: `kontra-simple-${item.sector}-${item.row}-${item.seat}-${index}`,
+              cx: item.x,
+              cy: item.y,
+              zone: item.sector,
+              row: item.row,
+              seatNum: item.seat,
+              type: 'kontramarka', 
+              status: 'available'
+            }));
+            setSeats(convertedSeats);
+            alert(`Успішно завантажено ${convertedSeats.length} місць зі спрощеного файлу!`);
+          } else {
+            setSeats(parsedData); // Якщо це старий бекап з cx/cy
+          }
+        } 
+        // ВАРІАНТ 3: Це формат OpenCV
+        else if (typeof parsedData === 'object' && parsedData !== null) {
+          let convertedSeats = [];
+          let idCounter = 1;
 
-      return (
-        <button
-          key={seatId}
-          className={className}
-          onClick={() => toggleSeat(zone, rowOrBox, seatNum)}
-          disabled={!isAdmin && isOccupied}
-        >
-          {seatNum}
-        </button>
-      );
-    });
+          const extractOpenCVData = (array, elementType) => {
+            if (Array.isArray(array)) {
+              array.forEach(item => {
+                convertedSeats.push({
+                  id: `opencv-${elementType}-${idCounter++}`,
+                  cx: item.x,
+                  cy: item.y,
+                  zone: 'Авто-імпорт',
+                  type: elementType,
+                  status: elementType === 'blocked_seats' ? 'blocked' : 'available'
+                });
+              });
+            }
+          };
+
+          extractOpenCVData(parsedData.available_seats, 'available_seats');
+          extractOpenCVData(parsedData.blocked_seats, 'blocked_seats');
+          extractOpenCVData(parsedData.yellow_lodges, 'yellow_lodges');
+          extractOpenCVData(parsedData.black_pillars, 'black_pillars');
+
+          setSeats(convertedSeats);
+        }
+      } catch (error) {
+        alert('Помилка при читанні JSON файлу. Перевірте формат.');
+        console.error(error);
+      }
+    };
+    reader.readAsText(file);
+    if (fileInputRef.current) fileInputRef.current.value = ''; // Скидаємо інпут
   };
 
-  // Партер: ряди 1-20. Зробимо масив від 20 до 1, щоб сцена була внизу.
-  const parterreRows = Array.from({ length: 20 }, (_, i) => 20 - i);
+  // Трохи яскравіші кольори для темного фону
+  const getFillColor = (type) => {
+    switch(type) {
+      case 'yellow_lodges': return '#fbbf24';   
+      case 'black_pillars': return '#9ca3af';    
+      case 'available_seats': return '#60a5fa';
+      case 'blocked_seats': return '#f87171';   
+      case 'manual': return '#4ade80';          
+      case 'kontramarka': return '#c084fc'; // Світло-фіолетовий
+      default: return '#f87171';
+    }
+  };
 
   return (
-    <div className={`hall-wrapper ${isAdmin ? 'admin-mode' : ''}`}>
-      <h2>ОПЕРНИЙ БУДИНОК {isAdmin ? '(АДМІН)' : ''}</h2>
+    <div style={{ 
+      padding: '30px', 
+      minHeight: '100vh', 
+      background: 'linear-gradient(135deg, #1e1e24, #2b2d42)', // Темний градієнт
+      color: '#fff',
+      fontFamily: 'system-ui, -apple-system, sans-serif'
+    }}>
       
-      <div className="scroll-container">
-        <div className="opera-layout">
-          
-          {/* ЯРУСИ БАЛКОНІВ (Верхня частина, вигнуті) */}
-          <div className="balconies-section">
-            <div className="balcony-tier tier-3">
-              <div className="zone-title">БАЛКОН 3</div>
-              {[5, 4, 3, 2, 1].map(row => (
-                <div key={`b3-${row}`} className={`row-wrapper curve-${row}`}>
-                  <span className="row-label">{row}</span>
-                  <div className="seats-group">{renderSeats('Б3', row, 30)}</div>
-                  <span className="row-label">{row}</span>
-                </div>
-              ))}
-            </div>
+      {/* Панель керування Glassmorphism */}
+      <div style={{ 
+        marginBottom: '30px', 
+        display: 'flex', 
+        flexWrap: 'wrap', 
+        gap: '15px', 
+        alignItems: 'center', 
+        justifyContent: 'center',
+        background: 'rgba(255, 255, 255, 0.05)',
+        backdropFilter: 'blur(16px)',
+        WebkitBackdropFilter: 'blur(16px)',
+        border: '1px solid rgba(255, 255, 255, 0.1)',
+        boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.3)',
+        borderRadius: '16px',
+        padding: '20px'
+      }}>
+        <input 
+          type="text" 
+          value={currentZone} 
+          onChange={(e) => setCurrentZone(e.target.value)} 
+          style={{ 
+            padding: '10px 15px', 
+            borderRadius: '8px', 
+            border: '1px solid rgba(255,255,255,0.2)', 
+            background: 'rgba(0,0,0,0.2)',
+            color: '#fff',
+            outline: 'none'
+          }}
+          placeholder="Назва зони"
+        />
+        <button onClick={undoLast} style={btnStyle}>Скасувати останній</button>
+        <button onClick={clearAll} style={{...btnStyle, background: 'rgba(239, 68, 68, 0.2)', color: '#fca5a5', borderColor: 'rgba(239, 68, 68, 0.3)'}}>Очистити всі</button>
+        <button onClick={copyToClipboard} style={{...btnStyle, background: '#3b82f6', color: '#fff', border: 'none'}}>
+          Скопіювати JSON ({seats.length})
+        </button>
 
-            <div className="balcony-tier tier-2">
-              <div className="zone-title">БАЛКОН 2</div>
-              {[5, 4, 3, 2, 1].map(row => (
-                <div key={`b2-${row}`} className={`row-wrapper curve-${row}`}>
-                  <span className="row-label">{row}</span>
-                  <div className="seats-group">{renderSeats('Б2', row, 26)}</div>
-                  <span className="row-label">{row}</span>
-                </div>
-              ))}
-            </div>
-
-            <div className="balcony-tier tier-1">
-              <div className="zone-title">БАЛКОН 1</div>
-              {[5, 4, 3, 2, 1].map(row => (
-                <div key={`b1-${row}`} className={`row-wrapper curve-${row}`}>
-                  <span className="row-label">{row}</span>
-                  <div className="seats-group">{renderSeats('Б1', row, 24)}</div>
-                  <span className="row-label">{row}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* ОСНОВНИЙ ПОВЕРХ: Ложі по боках, Партер по центру */}
-          <div className="main-floor-section">
-            
-            {/* ЛІВІ ЛОЖІ */}
-            <div className="boxes-column left-boxes">
-              <div className="zone-title small">ЛОЖІ</div>
-              {[14, 12, 10, 8, 6, 4, 2].map(boxNum => (
-                <div key={`box-l-${boxNum}`} className="box-wrapper left-step">
-                  <span className="box-number">{boxNum}</span>
-                  <div className="seats-group box-grid">{renderSeats('Ложа Л', boxNum, 4)}</div>
-                </div>
-              ))}
-            </div>
-
-            {/* ПАРТЕР */}
-            <div className="parterre-section">
-              <div className="zone-title">ПАРТЕР</div>
-              {parterreRows.map(row => {
-                // Нижні ряди (ближче до сцени) вужчі
-                const isFront = row <= 11;
-                const sideCount = isFront ? 3 : 5;
-                const centerCount = isFront ? 10 : 14;
-                const rightStart = sideCount + centerCount + 1;
-
-                return (
-                  <div key={`p-${row}`} className="row-wrapper">
-                    <span className="row-label">{row}</span>
-                    
-                    <div className="seats-group side-seats">
-                      {renderSeats('П-Лівий', row, sideCount)}
-                    </div>
-                    
-                    <div className="aisle"></div>
-                    
-                    <div className="seats-group">
-                      {renderSeats('П-Центр', row, centerCount, sideCount + 1)}
-                    </div>
-                    
-                    <div className="aisle"></div>
-                    
-                    <div className="seats-group side-seats">
-                      {renderSeats('П-Правий', row, sideCount, rightStart)}
-                    </div>
-
-                    <span className="row-label">{row}</span>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* ПРАВІ ЛОЖІ */}
-            <div className="boxes-column right-boxes">
-              <div className="zone-title small">ЛОЖІ</div>
-              {[13, 11, 9, 7, 5, 3, 1].map(boxNum => (
-                <div key={`box-r-${boxNum}`} className="box-wrapper right-step">
-                  <div className="seats-group box-grid">{renderSeats('Ложа П', boxNum, 4)}</div>
-                  <span className="box-number">{boxNum}</span>
-                </div>
-              ))}
-            </div>
-
-          </div>
-
-          {/* СЦЕНА */}
-          <div className="stage-container">
-            <div className="stage">СЦЕНА</div>
-          </div>
-
+        <div style={{ display: 'flex', alignItems: 'center', gap: '15px', paddingLeft: '20px', borderLeft: '1px solid rgba(255,255,255,0.2)' }}>
+          <label style={{ fontWeight: '500', color: '#e2e8f0' }}>Завантажити JSON:</label>
+          <input 
+            type="file" 
+            accept=".json,application/json" 
+            onChange={handleFileUpload} 
+            ref={fileInputRef} 
+            style={{ color: '#94a3b8' }}
+          />
         </div>
       </div>
 
-      {/* ЛЕГЕНДА */}
-      <div className="legend">
-        <div className="legend-item"><span className="seat available legend-dot"></span> Вільне</div>
-        <div className="legend-item"><span className="seat occupied legend-dot"></span> Зайняте</div>
-        <div className="legend-item"><span className="seat selected legend-dot"></span> Обране</div>
+      {/* Робоча область (Чиста геометрія) */}
+      <div 
+        ref={containerRef}
+        onClick={handleContainerClick}
+        style={{ 
+          position: 'relative', 
+          width: '100%', 
+          maxWidth: '1200px', // Ширина контейнера на екрані
+          aspectRatio: `${baseSize.width} / ${baseSize.height}`, // Зберігаємо точні пропорції Опери
+          margin: '0 auto', 
+          background: '#121214', // Глибокий темний фон для контрасту
+          border: '1px solid rgba(255,255,255,0.05)',
+          borderRadius: '12px',
+          boxShadow: 'inset 0 0 40px rgba(0,0,0,0.5), 0 20px 40px rgba(0,0,0,0.4)',
+          cursor: 'crosshair',
+          overflow: 'hidden'
+        }}
+      >
+        <svg 
+          viewBox={`0 0 ${baseSize.width} ${baseSize.height}`} 
+          style={{ width: '100%', height: '100%' }}
+        >
+          {/* Малюємо місця */}
+          {seats.map((seat) => (
+            <circle 
+              key={seat.id} 
+              cx={seat.cx} 
+              cy={seat.cy} 
+              r="18" // Великий радіус, щоб точки було видно на масивному полотні
+              fill={getFillColor(seat.type)} 
+              stroke="#121214" // Обведення кольором фону
+              strokeWidth="4" 
+              onClick={(e) => handleDotClick(e, seat.id)}
+              style={{ cursor: 'pointer', transition: 'all 0.2s ease' }}
+            />
+          ))}
+        </svg>
       </div>
     </div>
   );
 }
+
+// Загальний стиль для кнопок
+const btnStyle = {
+  padding: '10px 20px',
+  borderRadius: '8px',
+  border: '1px solid rgba(255,255,255,0.2)',
+  background: 'rgba(255,255,255,0.1)',
+  color: '#e2e8f0',
+  cursor: 'pointer',
+  fontWeight: '500',
+  transition: 'all 0.2s ease'
+};й

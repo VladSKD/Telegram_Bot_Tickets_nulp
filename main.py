@@ -79,7 +79,15 @@ async def mono_webhook(request):
                         total_paid = round(float(updated_order.get('paid_amount', 0.0)), 2)
                         
                         min_unit_price = extract_min_price(event['price'])
-                        required_total = round(float(min_unit_price * order['ticket_count']), 2)
+                        
+                        # --- НОВЕ: ВРАХОВУЄМО ЗНИЖКУ ВІД ПРОМОКОДУ ---
+                        discount = 0
+                        if order.get('promocode'):
+                            discount = event.get('promo_discount', 0)
+                        
+                        final_unit_price = max(0, min_unit_price - discount)
+                        required_total = round(float(final_unit_price * order['ticket_count']), 2)
+                        # ---------------------------------------------
                         
                         print(f"📊 [БОТ] Замовлення {order_id}. Є: {total_paid}, Треба: {required_total}")
                         
@@ -122,7 +130,6 @@ async def mono_webhook(request):
     except Exception as e:
         print(f"❌ [ПОМИЛКА]: {e}")
     return web.Response(text="OK", status=200)
-
 
 
 # --- РЕЄСТРАЦІЯ ВЕБХУКУ В МОНОБАНКУ ---
@@ -517,15 +524,9 @@ async def handle_sold_out(callback: CallbackQuery):
     await callback.message.answer("🥺 На жаль, усі квитки на цю подію вже розібрали!", parse_mode="HTML")
     await callback.answer()
 
-@dp.callback_query(F.data.startswith("buy_"))
-async def start_buy(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_reply_markup(reply_markup=None)
-    event_id = int(callback.data.split("_")[1])
-    await state.update_data(ev_id=event_id)
-    event = await db.get_event(event_id)
-    
+async def proceed_to_buy_logic(message: Message, state: FSMContext, event: dict):
     if event.get('venue_type') in ['organ_hall', 'assembly_hall']:
-        occ_list = await db.get_occupied_seats(event_id)
+        occ_list = await db.get_occupied_seats(event['id'])
         occ_str = ",".join(occ_list)
         
         # Посилання (обов'язково з https://)
@@ -541,15 +542,67 @@ async def start_buy(callback: CallbackQuery, state: FSMContext):
             resize_keyboard=True,
             one_time_keyboard=True
         )
-        await callback.message.answer("Обери бажані місця на інтерактивній схемі або натисни скасувати 👇", reply_markup=kb)
+        await message.answer("Обери бажані місця на інтерактивній схемі або натисни скасувати 👇", reply_markup=kb)
     else:
         # Для звичайних івентів додамо просту кнопку скасування під числом
         kb = ReplyKeyboardMarkup(
             keyboard=[[KeyboardButton(text="❌ Скасувати")]],
             resize_keyboard=True
         )
-        await callback.message.answer("🛒 <b>Скільки квитків беремо?</b>\n<i>Напиши просто число:</i>", reply_markup=kb, parse_mode="HTML")
+        await message.answer("🛒 <b>Скільки квитків беремо?</b>\n<i>Напиши просто число:</i>", reply_markup=kb, parse_mode="HTML")
         await state.set_state(OrderState.waiting_for_quantity)
+
+
+# --- ОНОВЛЕНИЙ START_BUY ТА ОБРОБКА ПРОМОКОДУ ---
+@dp.callback_query(F.data.startswith("buy_"))
+async def start_buy(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    event_id = int(callback.data.split("_")[1])
+    await state.update_data(ev_id=event_id, used_promo=None) # Очищаємо старий промокод, якщо був
+    event = await db.get_event(event_id)
+    
+    if event.get('has_promo'):
+        kb = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="➡️ Пропустити"), KeyboardButton(text="❌ Скасувати")]], 
+            resize_keyboard=True, 
+            one_time_keyboard=True
+        )
+        await callback.message.answer("🎟 Якщо маєш <b>промокод</b>, введи його зараз.\nЯкщо ні — тисни 'Пропустити':", reply_markup=kb, parse_mode="HTML")
+        await state.set_state(OrderState.waiting_for_promocode)
+    else:
+        # Якщо промокодів немає, одразу йдемо до вибору місць/кількості
+        await proceed_to_buy_logic(callback.message, state, event)
+    await callback.answer()
+
+
+@dp.message(OrderState.waiting_for_promocode)
+async def check_promocode(message: Message, state: FSMContext):
+    if message.text == "❌ Скасувати":
+        await state.clear()
+        return await message.answer("👌 Бронювання скасовано.", reply_markup=main_kb(message.from_user.id))
+
+    data = await state.get_data()
+    event = await db.get_event(data['ev_id'])
+    
+    if message.text != "➡️ Пропустити":
+        entered_promo = message.text.strip().upper()
+        # Розбиваємо рядок з бази даних (якщо він є) на список
+        valid_promos = event['promocodes'].split(",") if event.get('promocodes') else []
+        
+        if entered_promo in valid_promos:
+            await state.update_data(used_promo=entered_promo)
+            await message.answer(f"✅ Промокод застосовано! Знижка <b>{event['promo_discount']} грн</b> на кожен квиток.", reply_markup=ReplyKeyboardRemove(), parse_mode="HTML")
+        else:
+            kb = ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text="➡️ Пропустити"), KeyboardButton(text="❌ Скасувати")]], 
+                resize_keyboard=True
+            )
+            return await message.answer("❌ Невірний промокод. Спробуй ще раз або натисни 'Пропустити'.", reply_markup=kb)
+    else:
+        await message.answer("Продовжуємо без промокоду...", reply_markup=ReplyKeyboardRemove())
+            
+    # Викликаємо логіку вибору квитків
+    await proceed_to_buy_logic(message, state, event)
 
 
 @dp.message(F.text == "❌ Скасувати")
@@ -575,6 +628,10 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
     event_id = data['ev_id']
     friends = data.get('friends', [])
     
+    # 🎟 Дістаємо промокод, якщо він був використаний
+    used_promo = data.get('used_promo')
+    promo_str = used_promo if used_promo else "-"
+    
     event = await db.get_event(event_id)
     user = await db.get_user(message.from_user.id)
     username = user['username'] if user['username'] else "-"
@@ -587,20 +644,19 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
         f_type = "organ_seats"
 
     if is_organ or event['is_free']:
-        order_id = await db.add_order(message.from_user.id, event_id, qty, f_id, f_type)
+        # ПЕРЕДАЄМО used_promo В БАЗУ ДАНИХ
+        order_id = await db.add_order(message.from_user.id, event_id, qty, f_id, f_type, used_promo)
         await db.update_order_status(order_id, "confirmed")
         
         if is_organ:
             buyer_seat = seats[0]
-            # Беремо зону з об'єкта місця (вона там є завдяки нашому парсеру в handle_web_app_data)
             zone_v = buyer_seat.get('zone', 'Партер') 
-            
             status_buyer = f"Підтверджено (Р{buyer_seat['row']}М{buyer_seat['seat']})"
             
-            # Передаємо zone_v замість user['student_group']
+            # ПЕРЕДАЄМО promo_str В GOOGLE ТАБЛИЦЮ
             await sheets.add_order_to_sheet(
                 event['title'], order_id, user['last_name'], user['first_name'], 
-                username, user['institute'], zone_v, 1, status_buyer, event['venue_type']
+                username, user['institute'], zone_v, 1, status_buyer, event['venue_type'], promo_str
             )
             
             for i, friend_info in enumerate(friends):
@@ -608,10 +664,9 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
                 f_zone = f_seat.get('zone', 'Партер')
                 status_friend = f"Підтверджено (Р{f_seat['row']}М{f_seat['seat']})"
                 
-                # Тут теж передаємо зону
                 await sheets.add_order_to_sheet(
                     event['title'], order_id, "Друг", friend_info, "-", "Гість", 
-                    f_zone, 1, status_friend, event['venue_type']
+                    f_zone, 1, status_friend, event['venue_type'], promo_str
                 )
             
             formatted_seats = "\n".join([f"📍 Ряд: <b>{s['row']}</b>, Місце: <b>{s['seat']}</b>" for s in seats])
@@ -633,12 +688,12 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
             await sheets.add_order_to_sheet(
                 event['title'], order_id, user['last_name'], user['first_name'], 
                 username, user['institute'], user['student_group'], 
-                1, "Безкоштовно", event['venue_type']
+                1, "Безкоштовно", event['venue_type'], promo_str
             )
             for friend_info in friends:
                 await sheets.add_order_to_sheet(
                     event['title'], order_id, "Друг", friend_info, "-", "Гість", 
-                    f"від @{username}", 1, "Безкоштовно", event['venue_type']
+                    f"від @{username}", 1, "Безкоштовно", event['venue_type'], promo_str
                 )
                 
             await message.answer(f"✅ <b>Бронювання успішне!</b>\n\n🎟 <b>Кількість:</b> {qty} шт.\n\n📌 {event['success_message']}", reply_markup=main_kb(message.from_user.id), parse_mode="HTML")
@@ -646,46 +701,47 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
         await state.clear()
     else:
         # Логіка для ПЛАТНИХ подій (очікування оплати)
-        order_id = await db.add_order(message.from_user.id, event_id, qty, f_id, f_type)
+        order_id = await db.add_order(message.from_user.id, event_id, qty, f_id, f_type, used_promo)
         await db.update_order_status(order_id, "pending")
         
         status_str = "Очікує оплати"
         await sheets.add_order_to_sheet(
             event['title'], order_id, user['last_name'], user['first_name'], 
             username, user['institute'], user['student_group'], 
-            1, status_str, event['venue_type']
+            1, status_str, event['venue_type'], promo_str
         )
         for friend_info in friends:
             await sheets.add_order_to_sheet(
                 event['title'], order_id, "Друг", friend_info, "-", "Гість", 
-                f"від @{username}", 1, status_str, event['venue_type']
+                f"від @{username}", 1, status_str, event['venue_type'], promo_str
             )
         
-        
+        # --- РОЗРАХУНОК СУМИ ЗІ ЗНИЖКОЮ ---
         price_str = str(event['price']).strip()
         min_unit_price = extract_min_price(price_str)
-        total_required = min_unit_price * qty
+        
+        # Віднімаємо знижку (але не дозволяємо ціні бути мінусовою)
+        discount = event.get('promo_discount', 0) if used_promo else 0
+        final_unit_price = max(0, min_unit_price - discount)
+        total_required = final_unit_price * qty
         
         payment_code = f"NULP-{order_id}"
         
         if price_str.isdigit():
-            price_display = f"💳 <b>Сума до оплати:</b> {total_required} грн (по {price_str} грн/шт)"
+            if used_promo:
+                price_display = f"💳 <b>Сума до оплати:</b> {total_required} грн (зі знижкою, по {final_unit_price} грн/шт)"
+            else:
+                price_display = f"💳 <b>Сума до оплати:</b> {total_required} грн (по {min_unit_price} грн/шт)"
         else:
             price_display = (f"💵 <b>Умова:</b> {price_str} за один квиток.\n"
                              f"📈 <b>Разом за {qty} шт:</b> від {total_required} грн")
 
-        # --- НОВА ЛОГІКА: РОЗУМНЕ ПОСИЛАННЯ ---
-        # --- НОВА ЛОГІКА: РОЗУМНЕ ПОСИЛАННЯ ---
-        # --- НОВА ЛОГІКА: РОЗУМНЕ ПОСИЛАННЯ ---
-        # Очищаємо від пробілів та зайвого слеша в кінці
+        # --- РОЗУМНЕ ПОСИЛАННЯ ---
         base_link = event['bank_link'].strip().rstrip('/')
-        
-        # Використовуємо параметр "t" для коментаря
         if "?" in base_link:
             smart_link = f"{base_link}&t={payment_code}"
         else:
             smart_link = f"{base_link}?t={payment_code}"
-        # --------------------------------------
 
         text = (
             f"📝 <b>Твоє замовлення:</b> {qty} шт.\n"
@@ -701,11 +757,9 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
             [InlineKeyboardButton(text="📸 Надіслати підтвердження оплати вручну", callback_data=f"forgot_{order_id}")]
         ])
         
-
-
         await message.answer("🔄 Фіксую замовлення...", reply_markup=main_kb(message.from_user.id))
         
-        await message.answer(text, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=True)
+        await message.answer(text, kb.as_markup() if hasattr(kb, 'as_markup') else kb, parse_mode="HTML", disable_web_page_preview=True)
         await state.clear()
         
 
@@ -1071,14 +1125,14 @@ async def add_ev_location(message: Message, state: FSMContext):
     await state.update_data(location=message.text)
     data = await state.get_data()
     
-    # Якщо ми вже маємо кількість з WebApp, пропускаємо ручне введення
+    # Якщо ми вже маємо кількість з WebApp, пропускаємо ручне введення квитків
     if "total_tickets" in data:
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Безкоштовна", callback_data="ev_free")],
-            [InlineKeyboardButton(text="Платна", callback_data="ev_paid")]
+            [InlineKeyboardButton(text="Так, будуть", callback_data="promo_yes")],
+            [InlineKeyboardButton(text="Ні, без промокодів", callback_data="promo_no")]
         ])
-        await message.answer(f"Кількість квитків визначена автоматично: {data['total_tickets']}\nЯка це подія?", reply_markup=kb)
-        await state.set_state(AddEventState.is_free)
+        await message.answer(f"Кількість квитків визначена автоматично: {data['total_tickets']}\n\nЧи будуть промокоди для цієї події?", reply_markup=kb)
+        await state.set_state(AddEventState.ask_promo)
     else:
         await message.answer("Введіть загальну кількість квитків на подію (тільки число):")
         await state.set_state(AddEventState.total_tickets)
@@ -1089,12 +1143,59 @@ async def add_ev_tickets(message: Message, state: FSMContext):
         return await message.answer("Введіть ціле додатнє число (більше нуля)!")
     await state.update_data(total_tickets=int(message.text))
     
+    # Замість питання про платну/безкоштовну, питаємо про промокоди
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Так, будуть", callback_data="promo_yes")],
+        [InlineKeyboardButton(text="Ні, без промокодів", callback_data="promo_no")]
+    ])
+    await message.answer("Чи будуть промокоди для цієї події?", reply_markup=kb)
+    await state.set_state(AddEventState.ask_promo)
+
+# --- НОВІ ХЕНДЛЕРИ ДЛЯ ПРОМОКОДІВ ---
+
+@dp.callback_query(AddEventState.ask_promo, F.data.in_(["promo_yes", "promo_no"]))
+async def ask_promo_step(callback: CallbackQuery, state: FSMContext):
+    if callback.data == "promo_yes":
+        await state.update_data(has_promo=True, promo_list=[])
+        await callback.message.edit_text("Вводь промокоди ПО ОДНОМУ. Коли додаси всі, напиши слово <b>СТОП</b>:", parse_mode="HTML")
+        await state.set_state(AddEventState.wait_promo_list)
+    else:
+        await state.update_data(has_promo=False, promo_list=[], promo_discount=0)
+        # Перехід до вибору платної/безкоштовної події
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Безкоштовна", callback_data="ev_free")],
+            [InlineKeyboardButton(text="Платна", callback_data="ev_paid")]
+        ])
+        await callback.message.edit_text("Яка це подія?", reply_markup=kb)
+        await state.set_state(AddEventState.is_free)
+
+@dp.message(AddEventState.wait_promo_list)
+async def collect_promocodes(message: Message, state: FSMContext):
+    if message.text.strip().upper() == "СТОП":
+        await message.answer("Супер! Тепер введи <b>знижку на 1 квиток</b> у гривнях (тільки число, напр. 50):", parse_mode="HTML")
+        await state.set_state(AddEventState.wait_promo_discount)
+    else:
+        data = await state.get_data()
+        promo_list = data.get('promo_list', [])
+        promo_list.append(message.text.strip().upper())
+        await state.update_data(promo_list=promo_list)
+        await message.answer(f"✅ Промокод '<b>{message.text.strip().upper()}</b>' додано. Вводь наступний або пиши СТОП.", parse_mode="HTML")
+
+@dp.message(AddEventState.wait_promo_discount)
+async def get_promo_discount(message: Message, state: FSMContext):
+    if not message.text.isdigit():
+        return await message.answer("Тільки число!")
+    await state.update_data(promo_discount=int(message.text))
+    
+    # Далі стандартний перехід до типу події
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Безкоштовна", callback_data="ev_free")],
         [InlineKeyboardButton(text="Платна", callback_data="ev_paid")]
     ])
     await message.answer("Яка це подія?", reply_markup=kb)
     await state.set_state(AddEventState.is_free)
+
+# --- ПРОДОВЖЕННЯ ТВОГО СТАРОГО КОДУ ---
 
 @dp.callback_query(AddEventState.is_free, F.data.in_(["ev_free", "ev_paid"]))
 async def set_ev_type(callback: CallbackQuery, state: FSMContext):
@@ -1103,7 +1204,6 @@ async def set_ev_type(callback: CallbackQuery, state: FSMContext):
     
     if is_free:
         await state.update_data(is_fixed_price=True, price="0", link="", card="", requires_confirmation=False)
-        await state.update_data(is_fixed_price=True, price="0", link="", card="")
         await callback.message.answer("Введіть фінальне повідомлення (напр. 'Забирай квиток в 218 кабінеті'):")
         await state.set_state(AddEventState.success_message)
     else:
@@ -1114,6 +1214,8 @@ async def set_ev_type(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer("Який формат ціни буде у події?", reply_markup=kb)
         await state.set_state(AddEventState.price_type)
     await callback.answer()
+
+# ... і далі йде set_price_type, add_ev_price і т.д.
 
 @dp.callback_query(AddEventState.price_type, F.data.in_(["price_fixed", "price_flex"]))
 async def set_price_type(callback: CallbackQuery, state: FSMContext):
@@ -1159,11 +1261,16 @@ async def add_ev_final(message: Message, state: FSMContext):
     elif seats_data == "all":
         available_seats_str = None # Або можна лишити порожнім
         
+    # ОБРОБЛЯЄМО ПРОМОКОДИ
+    has_promo = d.get('has_promo', False)
+    promo_list_str = ",".join(d.get('promo_list', [])) if has_promo and d.get('promo_list') else None
+    promo_disc = d.get('promo_discount', 0)
+        
     await db.add_event(
         d['title'], d['desc'], d['photo_id'], d['dt'], d['venue_type'], 
         d['location'], d['total_tickets'], d['is_free'], d['price'], 
         d.get('link', ''), d.get('card', ''), message.text,
-        available_seats_str  # ТУТ МАЄ БУТИ 13-Й АРГУМЕНТ!
+        available_seats_str, has_promo, promo_list_str, promo_disc  # Додано 3 нові аргументи!
     )
     await message.answer("✅ Подію успішно додано!", reply_markup=main_kb(message.from_user.id))
     await state.clear()

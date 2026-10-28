@@ -40,10 +40,18 @@ class Database:
         
         
         # --- ДОДАЄМО КОЛОНКУ ДЛЯ АВТОПІДТВЕРДЖЕННЯ ---
+        # --- ДОДАЄМО КОЛОНКИ ДЛЯ ПРОМОКОДІВ ---
         try:
-            await self.pool.execute("ALTER TABLE events ADD COLUMN requires_confirmation BOOLEAN DEFAULT TRUE;")
+            await self.pool.execute("ALTER TABLE events ADD COLUMN has_promo BOOLEAN DEFAULT FALSE;")
+            await self.pool.execute("ALTER TABLE events ADD COLUMN promocodes TEXT;")
+            await self.pool.execute("ALTER TABLE events ADD COLUMN promo_discount FLOAT DEFAULT 0;")
         except Exception:
-            pass # Якщо колонка вже є, ігноруємо помилку
+            pass
+
+        try:
+            await self.pool.execute("ALTER TABLE orders ADD COLUMN promocode VARCHAR(50);")
+        except Exception:
+            pass
         
         try:
             await self.pool.execute("""
@@ -124,12 +132,12 @@ class Database:
         """
         await self.pool.execute(query, tg_id, username, first_name, last_name, institute, group)
 
-    async def add_event(self, title, desc, photo_id, dt, venue_type, location, total_tickets, is_free, price, link, card, success_message, available_seats=None):
+    async def add_event(self, title, desc, photo_id, dt, venue_type, location, total_tickets, is_free, price, link, card, success_message, available_seats, has_promo, promocodes, promo_discount):
         query = """
-        INSERT INTO events (title, description, photo_id, date_time, venue_type, location, total_tickets, is_free, price, bank_link, card_number, success_message, available_seats_list) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        INSERT INTO events (title, description, photo_id, date_time, venue_type, location, total_tickets, is_free, price, bank_link, card_number, success_message, available_seats_list, has_promo, promocodes, promo_discount) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         """
-        await self.pool.execute(query, title, desc, photo_id, dt, venue_type, location, total_tickets, is_free, price, link, card, success_message, available_seats)
+        await self.pool.execute(query, title, desc, photo_id, dt, venue_type, location, total_tickets, is_free, price, link, card, success_message, available_seats, has_promo, promocodes, promo_discount)
         
     async def get_event(self, event_id):
         query = """
@@ -159,10 +167,10 @@ class Database:
             query = f"UPDATE events SET {field_name} = $1 WHERE id = $2"
             await self.pool.execute(query, new_value, event_id)
 
-    async def add_order(self, user_id, event_id, count, file_id, f_type):
+    async def add_order(self, user_id, event_id, count, file_id, f_type, promocode=None):
         return await self.pool.fetchval(
-            "INSERT INTO orders (user_id, event_id, ticket_count, file_id, file_type) VALUES ($1, $2, $3, $4, $5) RETURNING id",
-            user_id, event_id, count, file_id, f_type
+            "INSERT INTO orders (user_id, event_id, ticket_count, file_id, file_type, status, promocode) VALUES ($1, $2, $3, $4, $5, 'pending', $6) RETURNING id",
+            user_id, event_id, count, file_id, f_type, promocode
         )
 
     async def update_order_status(self, order_id, status):
@@ -285,9 +293,4 @@ class Database:
             
         return occupied
 
-    async def add_order(self, user_id, event_id, count, file_id, f_type):
-        # file_id тепер зберігатиме список типу "A-2-5,B-4-10"
-        return await self.pool.fetchval(
-            "INSERT INTO orders (user_id, event_id, ticket_count, file_id, file_type, status) VALUES ($1, $2, $3, $4, $5, 'pending') RETURNING id",
-            user_id, event_id, count, file_id, f_type
-        )
+    

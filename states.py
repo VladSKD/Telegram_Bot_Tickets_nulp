@@ -16,6 +16,7 @@ class EditProfile(StatesGroup):
     enter_value = State()
     
 class OrderState(StatesGroup):
+    waiting_for_promocode = State()
     waiting_for_quantity = State()
     waiting_for_friend_data = State() # Стан для введення друзів
     waiting_for_proof = State()
@@ -29,7 +30,10 @@ class AddEventState(StatesGroup):
     seat_selection_mode = State()
     picking_seats = State()
     location = State() 
-    total_tickets = State() 
+    total_tickets = State()
+    ask_promo = State()           
+    wait_promo_list = State()     
+    wait_promo_discount = State() 
     is_free = State()
     price_type = State() 
     price = State()

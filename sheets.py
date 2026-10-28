@@ -60,11 +60,11 @@ def _get_or_create_worksheet(event_title, venue_type):
         except gspread.exceptions.WorksheetNotFound:
             # Чіткий поділ структури
             if venue_type in ['organ_hall', 'assembly_hall']:
-                headers = ["ID Замовлення", "Прізвище", "Ім'я", "Telegram", "Інститут", "Сектор", "Ряд", "Місце", "Статус", "Квиток забрано"]
-                cols = 10
+                headers = ["ID Замовлення", "Прізвище", "Ім'я", "Telegram", "Інститут", "Сектор", "Ряд", "Місце", "Статус", "Промокод", "Квиток забрано"]
+                cols = 11
             else:
-                headers = ["ID Замовлення", "Прізвище", "Ім'я", "Telegram", "Інститут", "Група", "К-сть квитків", "Статус"]
-                cols = 8
+                headers = ["ID Замовлення", "Прізвище", "Ім'я", "Telegram", "Інститут", "Група", "К-сть квитків", "Статус", "Промокод"]
+                cols = 9
             
             worksheet = doc.add_worksheet(title=event_title, rows="1000", cols=str(cols))
             worksheet.append_row(headers)
@@ -73,7 +73,7 @@ def _get_or_create_worksheet(event_title, venue_type):
         print(f"❌ [SHEETS ERROR] Не вдалося відкрити таблицю: {e}")
         return None
 
-def _add_order(event_title, order_id, last_name, first_name, username, institute, group, qty, status, venue_type):
+def _add_order(event_title, order_id, last_name, first_name, username, institute, group, qty, status, venue_type, promocode="-"):
     try:
         ws = _get_or_create_worksheet(event_title, venue_type)
         if not ws: return
@@ -88,9 +88,9 @@ def _add_order(event_title, order_id, last_name, first_name, username, institute
                 row_v, seat_v = match.group(1), match.group(2)
             
             # 🌟 ЗАМІСТЬ "-" СТАВИМО group (це буде наш сектор)
-            ws.append_row([order_id, last_name, first_name, tg, institute, group, row_v, seat_v, status, "Ні"])
+            ws.append_row([order_id, last_name, first_name, tg, institute, group, row_v, seat_v, status, promocode, "Ні"])
         else:
-            ws.append_row([order_id, last_name, first_name, tg, institute, group, qty, status])
+            ws.append_row([order_id, last_name, first_name, tg, institute, group, qty, status, promocode])
     except Exception as e:
         print(f"❌ Помилка запису замовлення: {e}")
 
