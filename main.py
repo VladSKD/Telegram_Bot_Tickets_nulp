@@ -759,7 +759,7 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
         
         await message.answer("🔄 Фіксую замовлення...", reply_markup=main_kb(message.from_user.id))
         
-        await message.answer(text, kb.as_markup() if hasattr(kb, 'as_markup') else kb, parse_mode="HTML", disable_web_page_preview=True)
+        await message.answer(text, reply_markup=kb.as_markup() if hasattr(kb, 'as_markup') else kb, parse_mode="HTML", disable_web_page_preview=True)
         await state.clear()
         
 
