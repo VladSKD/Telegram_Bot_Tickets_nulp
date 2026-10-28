@@ -79,9 +79,9 @@ class Database:
 
 
     async def update_order_paid_amount(self, order_id, amount_uah):
-        # Тепер зберігаємо суму з копійками
+        # Тепер зберігаємо суму з копійками та захищаємося від NULL
         await self.pool.execute(
-            "UPDATE orders SET paid_amount = paid_amount + $1 WHERE id = $2",
+            "UPDATE orders SET paid_amount = COALESCE(paid_amount, 0.0) + $1 WHERE id = $2",
             float(amount_uah), order_id
         )
 

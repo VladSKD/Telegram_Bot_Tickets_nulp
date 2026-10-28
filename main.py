@@ -75,18 +75,19 @@ async def mono_webhook(request):
                         await db.update_order_paid_amount(order_id, incoming_amount)
                         updated_order = await db.get_order(order_id)
                         
-                        # Округлюємо до 2 знаків після коми
-                        total_paid = round(float(updated_order.get('paid_amount', 0.0)), 2)
+                        # Округлюємо до 2 знаків після коми (захист від None через "or 0.0")
+                        total_paid = round(float(updated_order.get('paid_amount') or 0.0), 2)
                         
                         min_unit_price = extract_min_price(event['price'])
                         
                         # --- НОВЕ: ВРАХОВУЄМО ЗНИЖКУ ВІД ПРОМОКОДУ ---
                         discount = 0
                         if order.get('promocode'):
-                            discount = event.get('promo_discount', 0)
+                            discount = event.get('promo_discount') or 0  # Захист від None
                         
                         final_unit_price = max(0, min_unit_price - discount)
                         required_total = round(float(final_unit_price * order['ticket_count']), 2)
+                        # ---------------------------------------------
                         # ---------------------------------------------
                         
                         print(f"📊 [БОТ] Замовлення {order_id}. Є: {total_paid}, Треба: {required_total}")
