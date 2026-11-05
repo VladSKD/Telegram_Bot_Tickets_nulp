@@ -993,17 +993,27 @@ async def get_proof(message: Message, state: FSMContext):
                 pass
         await message.answer("⏳ <b>Квитанцію прийнято!</b>\nОчікуй на підтвердження адміністратором. Ми надішлемо тобі повідомлення.", parse_mode="HTML")
     else:
-        # РЕЖИМ АВТОПІДТВЕРДЖЕННЯ
-        caption += "\n\n✅ <i>(Автоматично підтверджено системою)</i>"
+        # РЕЖИМ РУЧНОЇ ПЕРЕВІРКИ ДЛЯ АДМІНА (З КНОПКАМИ)
+        caption += "\n\n⚠️ <i>Очікує ручної перевірки адміністратором</i>"
+        
+        # Створюємо клавіатуру з двома кнопками
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Підтвердити", callback_data=f"conf_{order_id}")],
+            [InlineKeyboardButton(text="❌ Відхилити", callback_data=f"reje_{order_id}")]
+        ])
+        
         for admin in ADMIN_IDS:
             try:
-                if f_type == "photo": await bot.send_photo(admin, f_id, caption=caption)
-                else: await bot.send_document(admin, f_id, caption=caption)
-            except Exception:
-                pass
+                if f_type == "photo": 
+                    await bot.send_photo(admin, f_id, caption=caption, reply_markup=kb, parse_mode="HTML")
+                else: 
+                    await bot.send_document(admin, f_id, caption=caption, reply_markup=kb, parse_mode="HTML")
+            except Exception as e:
+                print(f"Помилка відправки адміну {admin}: {e}")
                 
-        await db.update_order_status(order_id, "confirmed")
-        await message.answer(f"✅ <b>Квитанцію прийнято та підтверджено!</b>\n\n{event['success_message']}", parse_mode="HTML")
+        # Ставимо статус "pending_manual" (очікує ручного рішення), а НЕ confirmed!
+        await db.update_order_status(order_id, "pending_manual")
+        await message.answer(f"⏳ <b>Квитанцію надіслано на перевірку адміністратору!</b>\nОчікуй на підтвердження.", parse_mode="HTML")
         
     await state.clear()
 
