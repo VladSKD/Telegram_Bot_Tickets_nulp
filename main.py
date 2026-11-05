@@ -93,14 +93,43 @@ async def mono_webhook(request):
                         print(f"📊 [БОТ] Замовлення {order_id}. Є: {total_paid}, Треба: {required_total}")
                         
                         if total_paid >= required_total:
-                            print("✅ [БОТ] Сума зійшлася, видаємо квиток!")
-                            await db.update_order_status(order_id, "confirmed")
-                            await sheets.update_payment_in_sheet(event['title'], order_id, "Підтверджено (Авто)", event['venue_type'])
+                            print("✅ [БОТ] Банк отримав кошти! Передаємо на погодження адміну.")
                             
-                            msg = (f"✅ <b>Оплату отримано повністю!</b>\n\n"
-                                   f"💰 Всього сплачено: {total_paid} грн.\n"
-                                   f"📌 {event['success_message']}")
-                            await bot.send_message(order['user_id'], msg, parse_mode="HTML")
+                            # Ставимо статус, що очікує перевірки (не confirmed!)
+                            await db.update_order_status(order_id, "pending_manual")
+                            await sheets.update_payment_in_sheet(event['title'], order_id, "Очікує підтвердження", event['venue_type'])
+                            
+                            # Формуємо сповіщення для адмінів з кнопками
+                            user = await db.get_user(order['user_id'])
+                            username = user['username'] if user['username'] else "Без_юзернейму"
+                            qty = order['ticket_count']
+                            
+                            caption = (
+                                f"🚨 Отримано оплату через банк по замовленню #{order_id}!\n\n"
+                                f"👤 Студент: {user['last_name']} {user['first_name']} (@{username})\n"
+                                f"📚 Група: {user['institute']}, {user['student_group']}\n"
+                                f"🎟 Кількість квитків: {qty} шт.\n"
+                                f"💰 Сплачено: {total_paid} грн (Потрібно: {required_total} грн)"
+                            )
+                            
+                            kb = InlineKeyboardMarkup(inline_keyboard=[
+                                [InlineKeyboardButton(text="Підтвердити", callback_data=f"conf_{order_id}")],
+                                [InlineKeyboardButton(text="Відхилити", callback_data=f"reje_{order_id}")]
+                            ])
+                            
+                            # Розсилаємо всім адмінам
+                            for admin in ADMIN_IDS:
+                                try:
+                                    await bot.send_message(admin, caption, reply_markup=kb, parse_mode="HTML")
+                                except Exception:
+                                    pass
+                                    
+                            # Студенту пишемо, що гроші прийшли і чекаємо адміна
+                            await bot.send_message(
+                                order['user_id'], 
+                                f"✅ <b>Ми бачимо твій платіж на суму {total_paid} грн!</b>\nАдміністратор скоро перевірить його і надішле квиток.", 
+                                parse_mode="HTML"
+                            )
                             
                             if order['file_type'] == 'organ_seats' and order['file_id']:
                                 await bot.send_message(order['user_id'], "🎫 Твої офіційні квитки:")
