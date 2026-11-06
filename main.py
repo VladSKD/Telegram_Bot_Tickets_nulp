@@ -539,7 +539,6 @@ async def list_events(message: Message):
             f"📅 <b>Коли:</b> {ev['date_time']}\n"
             f"📍 <b>Локація:</b> {ev['location']}\n"
             f"💵 <b>Вартість:</b> {type_str}\n"
-            f"📊 <b>Залишилось квитків:</b> {rem} з {ev['total_tickets']}\n\n"
             f"📝 <b>Опис:</b>\n<i>{ev['description']}</i>"
         )
         
