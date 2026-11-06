@@ -265,7 +265,7 @@ def institute_kb():
         [KeyboardButton(text="ІКНІ"), KeyboardButton(text="ІКТЕ"), KeyboardButton(text="ІМФН")],
         [KeyboardButton(text="ІГСН"), KeyboardButton(text="ІГДГ"), KeyboardButton(text="ІПМТ")],
         [KeyboardButton(text="ІМІТ"), KeyboardButton(text="ІАРД"), KeyboardButton(text="ІЕСК")],
-        [KeyboardButton(text="ІСТР"), KeyboardButton(text="ІХХТ"), KeyboardButton(text="ІБІБ"), KeyboardButton(text="ІАДУ")]
+        [KeyboardButton(text="ІВБІ"), KeyboardButton(text="ІХХТ"), KeyboardButton(text="ІБІБ")]
     ]
     
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True, one_time_keyboard=True)
