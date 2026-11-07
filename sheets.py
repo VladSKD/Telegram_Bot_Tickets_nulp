@@ -4,6 +4,7 @@ import asyncio
 import os
 import json
 import re
+from datetime import datetime
 
 # --- МАПІНГ СЕКТОРІВ (ДЛЯ ОРГАННОГО ЗАЛУ) ---
 SECTOR_MAP = {
@@ -80,17 +81,20 @@ def _add_order(event_title, order_id, last_name, first_name, username, institute
 
         tg = f"@{username}" if username != "-" else "-"
         
+        # 🕒 Отримуємо поточну дату та час у зручному форматі (напр. 07.11.2026 21:00:15)
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
         if venue_type in ['organ_hall', 'assembly_hall']:
             row_v, seat_v = "-", "-"
-            # 🌟 ОНОВЛЕНИЙ REGEX: додано [0-9А-Яа-я], щоб розуміти ряди 12А, 5Б тощо
             match = re.search(r'Р([0-9А-Яа-я]+)М(\d+)', status)
             if match:
                 row_v, seat_v = match.group(1), match.group(2)
             
-            # 🌟 ЗАМІСТЬ "-" СТАВИМО group (це буде наш сектор)
-            ws.append_row([order_id, last_name, first_name, tg, institute, group, row_v, seat_v, status, promocode, "Ні"])
+            # 📌 Додаємо now_str на початок або в кінець масиву (залежно від того, де ви створили колонку)
+            # Приклад нижче додає дату першою колонкою після ID Замовлення:
+            ws.append_row([order_id, now_str, last_name, first_name, tg, institute, group, row_v, seat_v, status, promocode, "Ні"])
         else:
-            ws.append_row([order_id, last_name, first_name, tg, institute, group, qty, status, promocode])
+            ws.append_row([order_id, now_str, last_name, first_name, tg, institute, group, qty, status, promocode])
     except Exception as e:
         print(f"❌ Помилка запису замовлення: {e}")
 
