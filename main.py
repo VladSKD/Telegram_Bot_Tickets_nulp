@@ -23,6 +23,8 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.utils.keyboard import InlineKeyboardBuilder  # Окремий пакет для білдерів
 import logging
 logging.basicConfig(level=logging.INFO)
+from aiogram.types import BufferedInputFile
+from ticket_generator import create_personalized_ticket
 
 async def handle(request):
     return web.Response(text="Bot is alive!")
@@ -30,7 +32,7 @@ async def handle(request):
 async def mono_webhook(request):
     try:
         data = await request.json()
-        print(f"🔥 [МОНОБАНК RAW]: {data}") # Виводить АБСОЛЮТНО ВСЕ, що прислав банк
+        print(f"🔥 [МОНОБАНК RAW]: {data}")
         
         if data.get("type") == "StatementItem":
             item = data["data"]["statementItem"]
@@ -42,11 +44,9 @@ async def mono_webhook(request):
                 return web.Response(text="OK", status=200)
                 
             incoming_amount = raw_amount / 100 
-            
-            # 2. Беремо унікальний ID транзакції
             tx_id = item.get("id")
             
-            # 3. ПЕРЕВІРКА НА ДУБЛІКАТ (якщо раптом банк пришле двічі)
+            # 2. ПЕРЕВІРКА НА ДУБЛІКАТ
             if await db.is_transaction_processed(tx_id):
                 print(f"♻️ [МОНОБАНК] Транзакція {tx_id} вже оброблена раніше. Ігнорую дубль.")
                 return web.Response(text="OK", status=200)
@@ -58,7 +58,6 @@ async def mono_webhook(request):
             print(f"💰 [МОНОБАНК] ПЛЮС: {incoming_amount} грн. Текст: {full_text}")
             
             if "NULP-" in full_text:
-                import re
                 match = re.search(r'NULP-(\d+)', full_text)
                 if match:
                     order_id = int(match.group(1))
@@ -68,69 +67,58 @@ async def mono_webhook(request):
                     if order and order['status'] != 'confirmed':
                         event = await db.get_event(order['event_id'])
                         
-                        # ЗАПИСУЄМО ТРАНЗАКЦІЮ ЯК ОБРОБЛЕНУ
                         await db.mark_transaction_processed(tx_id)
-                        
-                        # Додаємо гроші
                         await db.update_order_paid_amount(order_id, incoming_amount)
                         updated_order = await db.get_order(order_id)
                         
-                        # Округлюємо до 2 знаків після коми (захист від None через "or 0.0")
                         total_paid = round(float(updated_order.get('paid_amount') or 0.0), 2)
-                        
                         min_unit_price = extract_min_price(event['price'])
                         
-                        # --- НОВЕ: ВРАХОВУЄМО ЗНИЖКУ ВІД ПРОМОКОДУ ---
                         discount = 0
                         if order.get('promocode'):
-                            discount = event.get('promo_discount') or 0  # Захист від None
+                            discount = event.get('promo_discount') or 0
                         
                         final_unit_price = max(0, min_unit_price - discount)
                         required_total = round(float(final_unit_price * order['ticket_count']), 2)
-                        # ---------------------------------------------
-                        # ---------------------------------------------
                         
                         print(f"📊 [БОТ] Замовлення {order_id}. Є: {total_paid}, Треба: {required_total}")
                         
                         if total_paid >= required_total:
-                            print("✅ [БОТ] Банк отримав кошти! Передаємо на погодження адміну.")
+                            print("✅ [БОТ] Автоматично підтверджуємо оплату!")
                             
-                            # Ставимо статус, що очікує перевірки (не confirmed!)
-                            await db.update_order_status(order_id, "pending_manual")
-                            await sheets.update_payment_in_sheet(event['title'], order_id, "Очікує підтвердження", event['venue_type'])
+                            # 1. АВТОМАТИЧНО СТАВИМО СТАТУС CONFIRMED
+                            await db.update_order_status(order_id, "confirmed")
+                            await sheets.update_payment_in_sheet(event['title'], order_id, "Підтверджено", event['venue_type'])
                             
-                            # Формуємо сповіщення для адмінів з кнопками
                             user = await db.get_user(order['user_id'])
                             username = user['username'] if user['username'] else "Без_юзернейму"
                             qty = order['ticket_count']
                             
-                            caption = (
-                                f"🚨 Отримано оплату через банк по замовленню #{order_id}!\n\n"
-                                f"👤 Студент: {user['last_name']} {user['first_name']} (@{username})\n"
-                                f"📚 Група: {user['institute']}, {user['student_group']}\n"
-                                f"🎟 Кількість квитків: {qty} шт.\n"
-                                f"💰 Сплачено: {total_paid} грн (Потрібно: {required_total} грн)"
-                            )
-                            
-                            kb = InlineKeyboardMarkup(inline_keyboard=[
-                                [InlineKeyboardButton(text="Підтвердити", callback_data=f"conf_{order_id}")],
-                                [InlineKeyboardButton(text="Відхилити", callback_data=f"reje_{order_id}")]
-                            ])
-                            
-                            # Розсилаємо всім адмінам
-                            for admin in ADMIN_IDS:
-                                try:
-                                    await bot.send_message(admin, caption, reply_markup=kb, parse_mode="HTML")
-                                except Exception:
-                                    pass
-                                    
-                            # Студенту пишемо, що гроші прийшли і чекаємо адміна
+                            # 2. ПОВІДОМЛЕННЯ СТУДЕНТУ СУПЕР-УСПІХ
                             await bot.send_message(
                                 order['user_id'], 
-                                f"✅ <b>Ми бачимо твій платіж на суму {total_paid} грн!</b>\nАдміністратор скоро перевірить його і надішле квиток.", 
+                                f"✅ <b>Оплату на суму {total_paid} грн успішно отримано!</b>\n\n📌 {event['success_message']}", 
                                 parse_mode="HTML"
                             )
                             
+                            # 📷 Якщо для події увімкнено QR-квиток
+                            if event.get('generates_qr_ticket'):
+                                ticket_buffer = create_personalized_ticket(
+                                    order_id=order_id, 
+                                    event_title=event['title']
+                                )
+                                photo_file = BufferedInputFile(
+                                    file=ticket_buffer.getvalue(), 
+                                    filename=f"ticket_{order_id}.png"
+                                )
+                                await bot.send_photo(
+                                    chat_id=order['user_id'],
+                                    photo=photo_file,
+                                    caption="🎟 <b>Твій персональний квиток з QR-кодом!</b> Пред'яви його при вході.",
+                                    parse_mode="HTML"
+                                )
+
+                            # 🎟 Якщо це Органний зал — надсилаємо фото квитків по місцях
                             if order['file_type'] == 'organ_seats' and order['file_id']:
                                 await bot.send_message(order['user_id'], "🎫 Твої офіційні квитки:")
                                 seats = order['file_id'].split(',')
@@ -143,17 +131,28 @@ async def mono_webhook(request):
                                             await bot.send_photo(order['user_id'], ticket['file_id'], caption=caption)
                                         else:
                                             await bot.send_document(order['user_id'], ticket['file_id'], caption=caption)
-                                    else:
-                                        await bot.send_message(order['user_id'], f"⚠️ Квиток для Ряду {row}, Місця {seat} ще не завантажений адміном.")
+
+                            # 3. ІНФОРМАЦІЙНЕ СПОВІЩЕННЯ АДМІНАМ (БЕЗ КНОПОК)
+                            admin_caption = (
+                                f"⚡️ <b>АВТО-ПІДТВЕРДЖЕННЯ ОПЛАТИ (Monobank)</b> #{order_id}\n\n"
+                                f"👤 Студент: {user['last_name']} {user['first_name']} (@{username})\n"
+                                f"📚 Група: {user['institute']}, {user['student_group']}\n"
+                                f"🎟 Кількість: {qty} шт.\n"
+                                f"💰 Сплачено: {total_paid} грн"
+                            )
+                            for admin in ADMIN_IDS:
+                                try:
+                                    await bot.send_message(admin, admin_caption, parse_mode="HTML")
+                                except Exception:
+                                    pass
                         else:
                             print("⚠️ [БОТ] НЕДОПЛАТА!")
-                            # Рахуємо різницю і теж округлюємо до 2 знаків
                             difference = round(required_total - total_paid, 2)
                             msg = (f"⚠️ <b>Недостатня сума для квитків!</b>\n\n"
                                    f"📥 Отримано зараз: {incoming_amount} грн\n"
                                    f"💰 Всього сплачено: {total_paid} грн\n"
                                    f"❌ <b>Потрібно ще: {difference} грн</b>\n\n"
-                                   f"Будь ласка, доплати різницю на ту саму Банку, <u>обов'язково</u> вказавши той самий код: <code>NULP-{order_id}</code>")
+                                   f"Будь ласка, доплати різницю на ту саму Банку з кодом: <code>NULP-{order_id}</code>")
                             await bot.send_message(order['user_id'], msg, parse_mode="HTML")
                             await sheets.update_payment_in_sheet(event['title'], order_id, f"Недоплата (є {total_paid} з {required_total})", event['venue_type'])
 
@@ -651,20 +650,22 @@ async def cancel_order(message: Message, state: FSMContext):
 
 
 # --- ФІНАЛІЗАЦІЯ ЗАМОВЛЕННЯ (Спільна функція) ---
-async def process_order_payment(message: Message, state: FSMContext, is_organ=False):
+async def process_order_payment(
+    message: Message, state: FSMContext, is_organ=False
+):
     data = await state.get_data()
     qty = data['qty']
     event_id = data['ev_id']
     friends = data.get('friends', [])
-    
+
     # 🎟 Дістаємо промокод, якщо він був використаний
     used_promo = data.get('used_promo')
     promo_str = used_promo if used_promo else "-"
-    
+
     event = await db.get_event(event_id)
     user = await db.get_user(message.from_user.id)
     username = user['username'] if user['username'] else "-"
-    
+
     f_id = None
     f_type = None
     if is_organ:
@@ -672,105 +673,210 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
         f_id = ",".join([f"{s['row']}-{s['seat']}" for s in seats])
         f_type = "organ_seats"
 
+    # =========================================================================
+    # 1. ГІЛКА ДЛЯ МИТТЄВО ПІДТВЕРДЖЕНИХ ЗАМОВЛЕНЬ (Органний зал або Безкоштовні)
+    # =========================================================================
     if is_organ or event['is_free']:
-        # ПЕРЕДАЄМО used_promo В БАЗУ ДАНИХ
-        order_id = await db.add_order(message.from_user.id, event_id, qty, f_id, f_type, used_promo)
+        order_id = await db.add_order(
+            message.from_user.id, event_id, qty, f_id, f_type, used_promo
+        )
         await db.update_order_status(order_id, "confirmed")
-        
+
         if is_organ:
             buyer_seat = seats[0]
-            zone_v = buyer_seat.get('zone', 'Партер') 
+            zone_v = buyer_seat.get('zone', 'Партер')
             status_buyer = f"Підтверджено (Р{buyer_seat['row']}М{buyer_seat['seat']})"
-            
-            # ПЕРЕДАЄМО promo_str В GOOGLE ТАБЛИЦЮ
+
             await sheets.add_order_to_sheet(
-                event['title'], order_id, user['last_name'], user['first_name'], 
-                username, user['institute'], zone_v, 1, status_buyer, event['venue_type'], promo_str
+                event['title'],
+                order_id,
+                user['last_name'],
+                user['first_name'],
+                username,
+                user['institute'],
+                zone_v,
+                1,
+                status_buyer,
+                event['venue_type'],
+                promo_str,
             )
-            
+
             for i, friend_info in enumerate(friends):
-                f_seat = seats[i+1]
+                f_seat = seats[i + 1]
                 f_zone = f_seat.get('zone', 'Партер')
-                status_friend = f"Підтверджено (Р{f_seat['row']}М{f_seat['seat']})"
-                
-                await sheets.add_order_to_sheet(
-                    event['title'], order_id, "Друг", friend_info, "-", "Гість", 
-                    f_zone, 1, status_friend, event['venue_type'], promo_str
+                status_friend = (
+                    f"Підтверджено (Р{f_seat['row']}М{f_seat['seat']})"
                 )
-            
-            formatted_seats = "\n".join([f"📍 Ряд: <b>{s['row']}</b>, Місце: <b>{s['seat']}</b>" for s in seats])
-            await message.answer(f"✅ <b>Бронювання успішне!</b>\n\n🎟 <b>Твої місця ({qty} шт.):</b>\n{formatted_seats}\n\n📌 {event['success_message']}", reply_markup=main_kb(message.from_user.id), parse_mode="HTML")
-            
+
+                await sheets.add_order_to_sheet(
+                    event['title'],
+                    order_id,
+                    "Друг",
+                    friend_info,
+                    "-",
+                    "Гість",
+                    f_zone,
+                    1,
+                    status_friend,
+                    event['venue_type'],
+                    promo_str,
+                )
+
+            formatted_seats = "\n".join(
+                [
+                    f"📍 Ряд: <b>{s['row']}</b>, Місце: <b>{s['seat']}</b>"
+                    for s in seats
+                ]
+            )
+            await message.answer(
+                f"✅ <b>Бронювання успішне!</b>\n\n🎟 <b>Твої місця ({qty} шт.):</b>\n{formatted_seats}\n\n📌 {event['success_message']}",
+                reply_markup=main_kb(message.from_user.id),
+                parse_mode="HTML",
+            )
+
             await message.answer("Ось твої офіційні квитки для входу:")
             for s in seats:
-                ticket_data = await db.get_seat_ticket(event_id, s['row'], s['seat'])
+                ticket_data = await db.get_seat_ticket(
+                    event_id, s['row'], s['seat']
+                )
                 if ticket_data:
                     caption = f"🎟 Ряд {s['row']}, Місце {s['seat']}"
                     if ticket_data['file_type'] == 'photo':
-                        await bot.send_photo(message.chat.id, ticket_data['file_id'], caption=caption)
+                        await bot.send_photo(
+                            message.chat.id,
+                            ticket_data['file_id'],
+                            caption=caption,
+                        )
                     else:
-                        await bot.send_document(message.chat.id, ticket_data['file_id'], caption=caption)
+                        await bot.send_document(
+                            message.chat.id,
+                            ticket_data['file_id'],
+                            caption=caption,
+                        )
                 else:
-                    await message.answer(f"⚠️ Квиток для Ряду {s['row']}, Місця {s['seat']} ще генерується. Організатори надішлють його згодом.")
+                    await message.answer(
+                        f"⚠️ Квиток для Ряду {s['row']}, Місця {s['seat']} ще генерується. Організатори надішлють його згодом."
+                    )
         else:
-            # Логіка для звичайних БЕЗКОШТОВНИХ подій
+            # 📌 Логіка для звичайних БЕЗКОШТОВНИХ подій
             await sheets.add_order_to_sheet(
-                event['title'], order_id, user['last_name'], user['first_name'], 
-                username, user['institute'], user['student_group'], 
-                1, "Безкоштовно", event['venue_type'], promo_str
+                event['title'],
+                order_id,
+                user['last_name'],
+                user['first_name'],
+                username,
+                user['institute'],
+                user['student_group'],
+                1,
+                "Безкоштовно",
+                event['venue_type'],
+                promo_str,
             )
             for friend_info in friends:
                 await sheets.add_order_to_sheet(
-                    event['title'], order_id, "Друг", friend_info, "-", "Гість", 
-                    f"від @{username}", 1, "Безкоштовно", event['venue_type'], promo_str
+                    event['title'],
+                    order_id,
+                    "Друг",
+                    friend_info,
+                    "-",
+                    "Гість",
+                    f"від @{username}",
+                    1,
+                    "Безкоштовно",
+                    event['venue_type'],
+                    promo_str,
                 )
-                
-            await message.answer(f"✅ <b>Бронювання успішне!</b>\n\n🎟 <b>Кількість:</b> {qty} шт.\n\n📌 {event['success_message']}", reply_markup=main_kb(message.from_user.id), parse_mode="HTML")
-            
+
+            await message.answer(
+                f"✅ <b>Бронювання успішне!</b>\n\n🎟 <b>Кількість:</b> {qty} шт.\n\n📌 {event['success_message']}",
+                reply_markup=main_kb(message.from_user.id),
+                parse_mode="HTML",
+            )
+
+            # -----------------------------------------------------------------
+            # 🚀 ВСТАВКА №1: НАДСИЛАЄМО QR-КВИТОК ДЛЯ БЕЗКОШТОВНИХ ПОДІЙ
+            # -----------------------------------------------------------------
+            if event.get('generates_qr_ticket'):
+                ticket_buffer = create_personalized_ticket(
+                    order_id=order_id, event_title=event['title']
+                )
+                photo_file = BufferedInputFile(
+                    file=ticket_buffer.getvalue(),
+                    filename=f"ticket_{order_id}.png",
+                )
+                await message.answer_photo(
+                    photo=photo_file,
+                    caption=f"🎟 <b>Твій персональний квиток на {event['title']}!</b>\nПокажи QR-код при вході.",
+                    parse_mode="HTML",
+                )
+            # -----------------------------------------------------------------
+
         await state.clear()
+
+    # =========================================================================
+    # 2. ГІЛКА ДЛЯ ПЛАТНИХ ПОДІЙ (Очікують оплати — QR ТУТ НЕ НАДСИЛАЄМО!)
+    # =========================================================================
     else:
-        # Логіка для ПЛАТНИХ подій (очікування оплати)
-        order_id = await db.add_order(message.from_user.id, event_id, qty, f_id, f_type, used_promo)
+        order_id = await db.add_order(
+            message.from_user.id, event_id, qty, f_id, f_type, used_promo
+        )
         await db.update_order_status(order_id, "pending")
-        
+
         status_str = "Очікує оплати"
         await sheets.add_order_to_sheet(
-            event['title'], order_id, user['last_name'], user['first_name'], 
-            username, user['institute'], user['student_group'], 
-            1, status_str, event['venue_type'], promo_str
+            event['title'],
+            order_id,
+            user['last_name'],
+            user['first_name'],
+            username,
+            user['institute'],
+            user['student_group'],
+            1,
+            status_str,
+            event['venue_type'],
+            promo_str,
         )
         for friend_info in friends:
             await sheets.add_order_to_sheet(
-                event['title'], order_id, "Друг", friend_info, "-", "Гість", 
-                f"від @{username}", 1, status_str, event['venue_type'], promo_str
+                event['title'],
+                order_id,
+                "Друг",
+                friend_info,
+                "-",
+                "Гість",
+                f"від @{username}",
+                1,
+                status_str,
+                event['venue_type'],
+                promo_str,
             )
-        
-        # --- РОЗРАХУНОК СУМИ ЗІ ЗНИЖКОЮ ---
+
         price_str = str(event['price']).strip()
         min_unit_price = extract_min_price(price_str)
-        
-        # Віднімаємо знижку (але не дозволяємо ціні бути мінусовою)
+
         discount = event.get('promo_discount', 0) if used_promo else 0
         final_unit_price = max(0, min_unit_price - discount)
         total_required = final_unit_price * qty
-        
+
         payment_code = f"NULP-{order_id}"
-        
+
         if price_str.isdigit():
             if used_promo:
                 price_display = f"💳 <b>Сума до оплати:</b> {total_required} грн (зі знижкою, по {final_unit_price} грн/шт)"
             else:
                 price_display = f"💳 <b>Сума до оплати:</b> {total_required} грн (по {min_unit_price} грн/шт)"
         else:
-            price_display = (f"💵 <b>Умова:</b> {price_str} за один квиток.\n"
-                             f"📈 <b>Разом за {qty} шт:</b> від {total_required} грн")
+            price_display = (
+                f"💵 <b>Умова:</b> {price_str} за один квиток.\n"
+                f"📈 <b>Разом за {qty} шт:</b> від {total_required} грн"
+            )
 
-        # --- РОЗУМНЕ ПОСИЛАННЯ ---
         base_link = event['bank_link'].strip().rstrip('/')
-        if "?" in base_link:
-            smart_link = f"{base_link}&t={payment_code}"
-        else:
-            smart_link = f"{base_link}?t={payment_code}"
+        smart_link = (
+            f"{base_link}&t={payment_code}"
+            if "?" in base_link
+            else f"{base_link}?t={payment_code}"
+        )
 
         text = (
             f"📝 <b>Твоє замовлення:</b> {qty} шт.\n"
@@ -782,13 +888,27 @@ async def process_order_payment(message: Message, state: FSMContext, is_organ=Fa
             f"👉 <code>{payment_code}</code> 👈\n\n"
             f"<i>Бот автоматично підтвердить оплату за цим кодом.</i>"
         )
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📸 Надіслати підтвердження оплати вручну", callback_data=f"forgot_{order_id}")]
-        ])
-        
-        await message.answer("🔄 Фіксую замовлення...", reply_markup=main_kb(message.from_user.id))
-        
-        await message.answer(text, reply_markup=kb.as_markup() if hasattr(kb, 'as_markup') else kb, parse_mode="HTML", disable_web_page_preview=True)
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📸 Надіслати підтвердження оплати вручну",
+                        callback_data=f"forgot_{order_id}",
+                    )
+                ]
+            ]
+        )
+
+        await message.answer(
+            "🔄 Фіксую замовлення...", reply_markup=main_kb(message.from_user.id)
+        )
+        await message.answer(
+            text,
+            reply_markup=kb.as_markup() if hasattr(kb, 'as_markup') else kb,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+
         await state.clear()
         
 
@@ -947,73 +1067,62 @@ async def forgot_code_handler(callback: CallbackQuery, state: FSMContext):
 @dp.message(OrderState.waiting_for_proof, F.photo | F.document)
 async def get_proof(message: Message, state: FSMContext):
     data = await state.get_data()
-    f_id = message.photo[-1].file_id if message.photo else message.document.file_id
-    f_type = "photo" if message.photo else "document"
-    
     order_id = data.get('manual_order_id')
+    
     if not order_id:
-        return await message.answer("⚠️ Помилка: замовлення не знайдено. Спробуй ще раз.")
+        await state.clear()
+        return await message.answer("⚠️ Помилка: замовлення не знайдено. Спробуй почати бронювання знову.")
         
     order = await db.get_order(order_id)
+    if not order:
+        await state.clear()
+        return await message.answer("⚠️ Замовлення не знайдено в базі даних.")
+
     event = await db.get_event(order['event_id'])
     user = await db.get_user(message.from_user.id)
     username = user['username'] if user['username'] else "Без_юзернейму"
-    
-    # 1. Беремо кількість квитків із бази даних
     qty = order['ticket_count']
-
-    # Оновлюємо замовлення файлом
+    
+    # 1. Визначаємо файл
+    f_id = message.photo[-1].file_id if message.photo else message.document.file_id
+    f_type = "photo" if message.photo else "document"
+    
+    # 2. Оновлюємо статус в БД на 'pending_manual' (Очікує рішення адміна)
     await db.attach_proof_to_order(order_id, f_id, f_type)
     
-    req_conf = event.get('requires_confirmation', True)
-    status_str = "Очікує (Скріншот)" if req_conf else "Підтверджено"
+    # 3. Оновлюємо статус у Google Таблиці
+    await sheets.update_payment_in_sheet(event['title'], order_id, "Очікує підтвердження", event['venue_type'])
     
-    # 2. ОНОВЛЮЄМО статус у таблиці (замість створення нових рядків)
-    await sheets.update_payment_in_sheet(event['title'], order_id, status_str, event['venue_type'])
-    
+    # 4. Формуємо сповіщення для адмінів
     caption = (
-        f"🚨 Нова оплата #{order_id}!\n\n"
+        f"📸 <b>Ручна перевірка квитанції!</b> (Замовлення #{order_id})\n\n"
         f"👤 Студент: {user['last_name']} {user['first_name']} (@{username})\n"
-        f"📚 Група: {user['institute']}, {user['student_group']}\n"
-        f"🎟 Кількість квитків: {qty} шт."
+        f"📚 Інститут/Група: {user['institute']}, {user['student_group']}\n"
+        f"🎟 Кількість квитків: {qty} шт.\n"
+        f"🎉 Подія: {event['title']}"
     )
-               
-    if req_conf:
-        # ЗВИЧАЙНИЙ РЕЖИМ (з кнопками)
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Підтвердити", callback_data=f"conf_{order_id}")],
-            [InlineKeyboardButton(text="Відхилити", callback_data=f"reje_{order_id}")]
-        ])
-        for admin in ADMIN_IDS:
-            try:
-                if f_type == "photo": await bot.send_photo(admin, f_id, caption=caption, reply_markup=kb)
-                else: await bot.send_document(admin, f_id, caption=caption, reply_markup=kb)
-            except Exception:
-                pass
-        await message.answer("⏳ <b>Квитанцію прийнято!</b>\nОчікуй на підтвердження адміністратором. Ми надішлемо тобі повідомлення.", parse_mode="HTML")
-    else:
-        # РЕЖИМ РУЧНОЇ ПЕРЕВІРКИ ДЛЯ АДМІНА (З КНОПКАМИ)
-        caption += "\n\n⚠️ <i>Очікує ручної перевірки адміністратором</i>"
-        
-        # Створюємо клавіатуру з двома кнопками
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Підтвердити", callback_data=f"conf_{order_id}")],
-            [InlineKeyboardButton(text="❌ Відхилити", callback_data=f"reje_{order_id}")]
-        ])
-        
-        for admin in ADMIN_IDS:
-            try:
-                if f_type == "photo": 
-                    await bot.send_photo(admin, f_id, caption=caption, reply_markup=kb, parse_mode="HTML")
-                else: 
-                    await bot.send_document(admin, f_id, caption=caption, reply_markup=kb, parse_mode="HTML")
-            except Exception as e:
-                print(f"Помилка відправки адміну {admin}: {e}")
-                
-        # Ставимо статус "pending_manual" (очікує ручного рішення), а НЕ confirmed!
-        await db.update_order_status(order_id, "pending_manual")
-        await message.answer(f"⏳ <b>Квитанцію надіслано на перевірку адміністратору!</b>\nОчікуй на підтвердження.", parse_mode="HTML")
-        
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Підтвердити", callback_data=f"conf_{order_id}")],
+        [InlineKeyboardButton(text="❌ Відхилити", callback_data=f"reje_{order_id}")]
+    ])
+    
+    # 5. Надсилаємо квитанцію усім адмінам з кнопками
+    for admin in ADMIN_IDS:
+        try:
+            if f_type == "photo": 
+                await bot.send_photo(admin, f_id, caption=caption, reply_markup=kb, parse_mode="HTML")
+            else: 
+                await bot.send_document(admin, f_id, caption=caption, reply_markup=kb, parse_mode="HTML")
+        except Exception as e:
+            print(f"Помилка відправки квитанції адміну {admin}: {e}")
+            
+    # 6. Відповідаємо студенту
+    await message.answer(
+        "⏳ <b>Квитанцію прийнято та надіслано адміністратору!</b>\n"
+        "Після перевірки ми надішлемо тобі підтвердження.", 
+        parse_mode="HTML"
+    )
     await state.clear()
 
 @dp.message(OrderState.waiting_for_proof)
@@ -1243,27 +1352,33 @@ async def set_ev_type(callback: CallbackQuery, state: FSMContext):
     
     if is_free:
         await state.update_data(is_fixed_price=True, price="0", link="", card="", requires_confirmation=False)
-        await callback.message.answer("Введіть фінальне повідомлення (напр. 'Забирай квиток в 218 кабінеті'):")
-        await state.set_state(AddEventState.success_message)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📷 З фото-квитком (QR)", callback_data="qr_yes")],
+            [InlineKeyboardButton(text="📝 Звичайний (текст / стандарт)", callback_data="qr_no")]
+        ])
+        await callback.message.edit_text("Чи потрібно генерувати графічний квиток з QR-кодом?", reply_markup=kb)
+        await state.set_state(AddEventState.ask_qr)
     else:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Фіксована ціна", callback_data="price_fixed")],
             [InlineKeyboardButton(text="Гнучка ціна (текст)", callback_data="price_flex")]
         ])
-        await callback.message.answer("Який формат ціни буде у події?", reply_markup=kb)
+        await callback.message.edit_text("Який формат ціни буде у події?", reply_markup=kb)
         await state.set_state(AddEventState.price_type)
     await callback.answer()
 
-# ... і далі йде set_price_type, add_ev_price і т.д.
 
 @dp.callback_query(AddEventState.price_type, F.data.in_(["price_fixed", "price_flex"]))
 async def set_price_type(callback: CallbackQuery, state: FSMContext):
     is_fixed = (callback.data == "price_fixed")
     await state.update_data(is_fixed_price=is_fixed)
-    if is_fixed: await callback.message.answer("Введіть ціну за 1 квиток (ТІЛЬКИ ЧИСЛО, напр. 150):")
-    else: await callback.message.answer("Введіть текст ціни (напр. 'від 100 грн' або 'донат від 50 грн'):")
+    if is_fixed: 
+        await callback.message.edit_text("Введіть ціну за 1 квиток (ТІЛЬКИ ЧИСЛО, напр. 150):")
+    else: 
+        await callback.message.edit_text("Введіть текст ціни (напр. 'від 100 грн' або 'донат від 50 грн'):")
     await state.set_state(AddEventState.price)
     await callback.answer()
+
 
 @dp.message(AddEventState.price)
 async def add_ev_price(message: Message, state: FSMContext):
@@ -1274,17 +1389,34 @@ async def add_ev_price(message: Message, state: FSMContext):
     await message.answer("Введіть посилання на банку Monobank:")
     await state.set_state(AddEventState.bank_link)
 
+
 @dp.message(AddEventState.bank_link)
 async def add_ev_link(message: Message, state: FSMContext):
     await state.update_data(link=message.text)
     await message.answer("Введіть номер картки (тільки цифри):")
     await state.set_state(AddEventState.card_number)
 
+
 @dp.message(AddEventState.card_number)
 async def add_ev_card(message: Message, state: FSMContext):
     await state.update_data(card=message.text)
-    await message.answer("Введіть фінальне повідомлення після підтвердження оплати:")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📷 З фото-квитком (QR)", callback_data="qr_yes")],
+        [InlineKeyboardButton(text="📝 Звичайний (текст / стандарт)", callback_data="qr_no")]
+    ])
+    await message.answer("Чи потрібно генерувати графічний квиток з QR-кодом?", reply_markup=kb)
+    await state.set_state(AddEventState.ask_qr)
+
+
+# --- ХЕНДЛЕР ОБРОБКИ ВИБОРУ QR-КВИТКА ---
+@dp.callback_query(AddEventState.ask_qr, F.data.in_(["qr_yes", "qr_no"]))
+async def set_ev_qr_option(callback: CallbackQuery, state: FSMContext):
+    generates_qr = (callback.data == "qr_yes")
+    await state.update_data(generates_qr_ticket=generates_qr)
+    
+    await callback.message.edit_text("Введіть фінальне повідомлення після підтвердження замовлення/оплати:")
     await state.set_state(AddEventState.success_message)
+    await callback.answer()
 
 
 
@@ -1298,18 +1430,22 @@ async def add_ev_final(message: Message, state: FSMContext):
     if isinstance(seats_data, list):
         available_seats_str = ",".join(seats_data)
     elif seats_data == "all":
-        available_seats_str = None # Або можна лишити порожнім
+        available_seats_str = None
         
     # ОБРОБЛЯЄМО ПРОМОКОДИ
     has_promo = d.get('has_promo', False)
     promo_list_str = ",".join(d.get('promo_list', [])) if has_promo and d.get('promo_list') else None
     promo_disc = d.get('promo_discount', 0)
+    
+    # 📷 ЗЧИТУЄМО НАЛАШТУВАННЯ QR-КВИТКА
+    generates_qr = d.get('generates_qr_ticket', False)
         
     await db.add_event(
         d['title'], d['desc'], d['photo_id'], d['dt'], d['venue_type'], 
         d['location'], d['total_tickets'], d['is_free'], d['price'], 
         d.get('link', ''), d.get('card', ''), message.text,
-        available_seats_str, has_promo, promo_list_str, promo_disc  # Додано 3 нові аргументи!
+        available_seats_str, has_promo, promo_list_str, promo_disc,
+        generates_qr  # 👈 Додано новий аргумент
     )
     await message.answer("✅ Подію успішно додано!", reply_markup=main_kb(message.from_user.id))
     await state.clear()

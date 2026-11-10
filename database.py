@@ -54,6 +54,11 @@ class Database:
             pass
         
         try:
+            await self.pool.execute("ALTER TABLE events ADD COLUMN generates_qr_ticket BOOLEAN DEFAULT FALSE;")
+        except Exception:
+            pass
+        
+        try:
             await self.pool.execute("""
                 ALTER TABLE orders 
                 ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();
@@ -132,12 +137,20 @@ class Database:
         """
         await self.pool.execute(query, tg_id, username, first_name, last_name, institute, group)
 
-    async def add_event(self, title, desc, photo_id, dt, venue_type, location, total_tickets, is_free, price, link, card, success_message, available_seats, has_promo, promocodes, promo_discount):
+    async def add_event(self, title, desc, photo_id, dt, venue_type, location, total_tickets, is_free, price, link, card, success_message, available_seats, has_promo, promocodes, promo_discount, generates_qr_ticket=False):
         query = """
-        INSERT INTO events (title, description, photo_id, date_time, venue_type, location, total_tickets, is_free, price, bank_link, card_number, success_message, available_seats_list, has_promo, promocodes, promo_discount) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        INSERT INTO events (
+            title, description, photo_id, date_time, venue_type, location, 
+            total_tickets, is_free, price, bank_link, card_number, success_message, 
+            available_seats_list, has_promo, promocodes, promo_discount, generates_qr_ticket
+        ) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
         """
-        await self.pool.execute(query, title, desc, photo_id, dt, venue_type, location, total_tickets, is_free, price, link, card, success_message, available_seats, has_promo, promocodes, promo_discount)
+        await self.pool.execute(
+            query, title, desc, photo_id, dt, venue_type, location, 
+            total_tickets, is_free, price, link, card, success_message, 
+            available_seats, has_promo, promocodes, promo_discount, generates_qr_ticket
+        )
         
     async def get_event(self, event_id):
         query = """

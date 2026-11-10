@@ -110,7 +110,7 @@ def _update_cell_in_sheet(event_title, order_id, status, venue_type):
         if not cells: return
 
         # Визначаємо колонку статусу: 9-та для залів, 8-ма для звичайних
-        status_col = 9 if venue_type in ['organ_hall', 'assembly_hall'] else 8
+        status_col = 10 if venue_type in ['organ_hall', 'assembly_hall'] else 9
 
         for cell in cells:
             ws.update_cell(cell.row, status_col, status)
