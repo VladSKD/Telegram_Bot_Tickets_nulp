@@ -614,12 +614,31 @@ async def check_promocode(message: Message, state: FSMContext):
     
     if message.text != "➡️ Пропустити":
         entered_promo = message.text.strip().upper()
-        # Розбиваємо рядок з бази даних (якщо він є) на список
-        valid_promos = event['promocodes'].split(",") if event.get('promocodes') else []
+        raw_promos = event.get('promocodes', '') # Наприклад: "STUDENT50:50, VIP100:100"
         
-        if entered_promo in valid_promos:
-            await state.update_data(used_promo=entered_promo)
-            await message.answer(f"✅ Промокод застосовано! Знижка <b>{event['promo_discount']} грн</b> на кожен квиток.", reply_markup=ReplyKeyboardRemove(), parse_mode="HTML")
+        discount = 0
+        promo_found = False
+        
+        # Перебираємо всі промокоди з бази
+        for item in raw_promos.split(','):
+            item = item.strip()
+            if ":" in item:
+                code, val = item.split(":", 1)
+                if code.strip().upper() == entered_promo:
+                    discount = float(val.strip())
+                    promo_found = True
+                    break
+            else:
+                # Старий формат (якщо раптом без двокрапки)
+                if item.strip().upper() == entered_promo:
+                    discount = event.get('promo_discount', 0)
+                    promo_found = True
+                    break
+        
+        if promo_found:
+            # Зберігаємо використаний промокод та його індивідуальну знижку в стан
+            await state.update_data(used_promo=entered_promo, applied_discount=discount)
+            await message.answer(f"✅ Промокод застосовано! Знижка <b>{discount} грн</b> на кожен квиток.", reply_markup=ReplyKeyboardRemove(), parse_mode="HTML")
         else:
             kb = ReplyKeyboardMarkup(
                 keyboard=[[KeyboardButton(text="➡️ Пропустити"), KeyboardButton(text="❌ Скасувати")]], 
@@ -629,7 +648,6 @@ async def check_promocode(message: Message, state: FSMContext):
     else:
         await message.answer("Продовжуємо без промокоду...", reply_markup=ReplyKeyboardRemove())
             
-    # Викликаємо логіку вибору квитків
     await proceed_to_buy_logic(message, state, event)
 
 
@@ -854,7 +872,7 @@ async def process_order_payment(
         price_str = str(event['price']).strip()
         min_unit_price = extract_min_price(price_str)
 
-        discount = event.get('promo_discount', 0) if used_promo else 0
+        discount = data.get('applied_discount', 0) if used_promo else 0
         final_unit_price = max(0, min_unit_price - discount)
         total_required = final_unit_price * qty
 
@@ -1642,6 +1660,23 @@ async def finish_mass_upload(callback: CallbackQuery, state: FSMContext):
     count = data.get('uploaded_count', 0)
     await callback.message.edit_text(f"✅ <b>Масове завантаження завершено!</b>\nУспішно збережено квитків: <b>{count}</b> шт.", parse_mode="HTML")
     await state.clear()
+
+@dp.message(AddEventState.wait_promo_list)
+async def collect_promocodes(message: Message, state: FSMContext):
+    if message.text.strip().upper() == "СТОП":
+        # Пропускаємо крок введення єдиної знижки, бо знижки тепер будуть вписані самі
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Безкоштовна", callback_data="ev_free")],
+            [InlineKeyboardButton(text="Платна", callback_data="ev_paid")]
+        ])
+        await message.answer("✅ Промокоди збережено!\n\nЯка це подія?", reply_markup=kb)
+        await state.set_state(AddEventState.is_free)
+    else:
+        data = await state.get_data()
+        promo_list = data.get('promo_list', [])
+        promo_list.append(message.text.strip().upper())
+        await state.update_data(promo_list=promo_list)
+        await message.answer(f"✅ Додано: '<b>{message.text.strip().upper()}</b>'. Вводь наступний у форматі <code>КОД:ЗНИЖКА</code> (напр. <code>START50:50</code>) або пиши СТОП.", parse_mode="HTML")
 
 # --- АДМІН: ПІДТВЕРДЖЕННЯ ОПЛАТИ ---
 @dp.callback_query(F.data.startswith("conf_") | F.data.startswith("reje_"))
