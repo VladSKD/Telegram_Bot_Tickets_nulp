@@ -4,3 +4,5 @@ python-dotenv
 aiohttp
 gspread
 google-auth
+qrcode
+Pillow
