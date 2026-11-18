@@ -1701,13 +1701,30 @@ async def handle_decision(callback: CallbackQuery):
 # --- РОЗСИЛКА ---
 @dp.callback_query(F.data == "admin_broadcast")
 async def start_broadcast(callback: CallbackQuery, state: FSMContext):
-    events = await db.get_active_events()
-    kb_buttons = [[InlineKeyboardButton(text="📢 Усім зареєстрованим у боті", callback_data="bcast_all")]]
-    for ev in events: kb_buttons.append([InlineKeyboardButton(text=f"🎫 Тільки: {ev['title']}", callback_data=f"bcast_ev_{ev['id']}")])
+    # Отримуємо всі події (або активні, залежно від вашої бази)
+    events = await db.get_all_events() if hasattr(db, "get_all_events") else await db.get_active_events()
+    
+    # Зберігаємо у стан порожній список обраних подій
+    await state.update_data(selected_events=[])
+    
+    kb_buttons = [
+        [InlineKeyboardButton(text="📢 Усім зареєстрованим у боті", callback_data="bcast_all")]
+    ]
+    
+    for ev in events:
+        kb_buttons.append([
+            InlineKeyboardButton(text=f"⬜ {ev['title']}", callback_data=f"bcast_toggle_{ev['id']}")
+        ])
+        
+    kb_buttons.append([InlineKeyboardButton(text="🚀 Готово (Обрати ці події)", callback_data="bcast_done")])
     kb_buttons.append([InlineKeyboardButton(text="❌ Скасувати", callback_data="bcast_cancel")])
-    await callback.message.edit_text("<b>Кому хочеш надіслати повідомлення?</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_buttons), parse_mode="HTML")
+    
+    await callback.message.edit_text(
+        "<b>Кому хочеш надіслати повідомлення?</b>\n<i>Можеш обрати кілька подій (натискай на них):</i>", 
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_buttons), 
+        parse_mode="HTML"
+    )
     await state.set_state(AdminBroadcast.choose_audience)
-
 @dp.callback_query(AdminBroadcast.choose_audience, F.data.startswith("bcast_"))
 async def choose_broadcast_audience(callback: CallbackQuery, state: FSMContext):
     action = callback.data.replace("bcast_", "")
