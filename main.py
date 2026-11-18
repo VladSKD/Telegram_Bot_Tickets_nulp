@@ -1725,6 +1725,79 @@ async def start_broadcast(callback: CallbackQuery, state: FSMContext):
         parse_mode="HTML"
     )
     await state.set_state(AdminBroadcast.choose_audience)
+    
+@dp.callback_query(AdminBroadcast.choose_audience, F.data.startswith("bcast_"))
+async def toggle_broadcast_audience(callback: CallbackQuery, state: FSMContext):
+    action = callback.data.replace("bcast_", "")
+    
+    if action == "cancel":
+        await callback.message.edit_text("❌ Розсилку скасовано.")
+        return await state.clear()
+        
+    if action == "all":
+        await state.update_data(broadcast_target="all")
+        await callback.message.edit_text("📢 <b>Режим розсилки (Усім)</b>\nНадішли мені повідомлення.\n<i>Щоб скасувати, напиши 'Скасувати'.</i>", parse_mode="HTML")
+        return await state.set_state(AdminBroadcast.waiting_for_message)
+
+    if action.startswith("ev_"):
+        # Сумісність, якщо десь лишився старий виклик
+        event_id = int(action.replace("ev_", ""))
+        data = await state.get_data()
+        selected = data.get('selected_events', [])
+        if event_id not in selected: selected.append(event_id)
+        await state.update_data(selected_events=selected)
+        action = "done" # переходимо до тексту
+
+    if action.startswith("toggle_"):
+        event_id = int(action.replace("toggle_", ""))
+        data = await state.get_data()
+        selected = data.get('selected_events', [])
+        
+        # Додаємо або прибираємо подію зі списку
+        if event_id in selected:
+            selected.remove(event_id)
+        else:
+            selected.append(event_id)
+            
+        await state.update_data(selected_events=selected)
+        
+        # Оновлюємо клавіатуру, щоб показати галочки ✅
+        events = await db.get_all_events() if hasattr(db, "get_all_events") else await db.get_active_events()
+        kb_buttons = [
+            [InlineKeyboardButton(text="📢 Усім зареєстрованим у боті", callback_data="bcast_all")]
+        ]
+        
+        for ev in events:
+            checkbox = "✅" if ev['id'] in selected else "⬜"
+            kb_buttons.append([
+                InlineKeyboardButton(text=f"{checkbox} {ev['title']}", callback_data=f"bcast_toggle_{ev['id']}")
+            ])
+            
+        kb_buttons.append([InlineKeyboardButton(text="🚀 Готово (Обрати ці події)", callback_data="bcast_done")])
+        kb_buttons.append([InlineKeyboardButton(text="❌ Скасувати", callback_data="bcast_cancel")])
+        
+        try:
+            await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_buttons))
+        except Exception:
+            pass
+        return await callback.answer()
+
+    if action == "done":
+        data = await state.get_data()
+        selected = data.get('selected_events', [])
+        
+        if not selected:
+            return await callback.answer("⚠️ Окремим кліком оберіть хоча б одну подію або натисніть 'Усім'!", show_indicator=True)
+            
+        await state.update_data(broadcast_target="multiple_events")
+        await callback.message.edit_text(
+            f"📢 <b>Режим розсилки</b> (Обрано подій: {len(selected)})\n"
+            "Надішли мені повідомлення для розсилки.\n\n"
+            "<i>Щоб скасувати, напиши 'Скасувати'.</i>", 
+            parse_mode="HTML"
+        )
+        await state.set_state(AdminBroadcast.waiting_for_message)
+    
 @dp.callback_query(AdminBroadcast.choose_audience, F.data.startswith("bcast_"))
 async def choose_broadcast_audience(callback: CallbackQuery, state: FSMContext):
     action = callback.data.replace("bcast_", "")
@@ -1743,14 +1816,36 @@ async def process_broadcast(message: Message, state: FSMContext):
 
     data = await state.get_data()
     target = data.get('broadcast_target')
-    users = await db.get_all_users() if target == "all" else await db.get_users_by_event(int(target.replace("ev_", "")))
+    
+    users_dict = {} # Використовуємо словник як унікальний фільтр за tg_id
+
+    if target == "all":
+        all_users = await db.get_all_users()
+        for u in all_users:
+            users_dict[u['tg_id']] = u
+            
+    elif target == "multiple_events":
+        selected_event_ids = data.get('selected_events', [])
+        for ev_id in selected_event_ids:
+            event_users = await db.get_users_by_event(ev_id)
+            for u in event_users:
+                users_dict[u['tg_id']] = u
+    else:
+        # Стара сумісність для одиничних подій
+        event_id = int(target.replace("ev_", ""))
+        event_users = await db.get_users_by_event(event_id)
+        for u in event_users:
+            users_dict[u['tg_id']] = u
+
+    users = list(users_dict.values())
 
     if not users:
         await message.answer("🤷‍♂️ Не знайдено користувачів для цієї розсилки.")
         return await state.clear()
 
-    await message.answer(f"🚀 Починаю розсилку для {len(users)} користувачів...")
+    await message.answer(f"🚀 Починаю розсилку для {len(users)} унікальних користувачів...")
     success, blocked = 0, 0
+    
     for user in users:
         try:
             await message.copy_to(user['tg_id'])
