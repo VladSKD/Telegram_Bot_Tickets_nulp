@@ -1712,10 +1712,12 @@ async def start_broadcast(callback: CallbackQuery, state: FSMContext):
     ]
     
     for ev in events:
+        status = "" if ev.get('is_active', True) else " (закрита)"
         kb_buttons.append([
-            InlineKeyboardButton(text=f"⬜ {ev['title']}", callback_data=f"bcast_toggle_{ev['id']}")
+            InlineKeyboardButton(text=f"⬜ {ev['title']}{status}", callback_data=f"bcast_toggle_{ev['id']}")
         ])
-        
+    
+            
     kb_buttons.append([InlineKeyboardButton(text="🚀 Готово (Обрати ці події)", callback_data="bcast_done")])
     kb_buttons.append([InlineKeyboardButton(text="❌ Скасувати", callback_data="bcast_cancel")])
     

@@ -170,6 +170,11 @@ class Database:
         FROM events e WHERE e.is_active = TRUE
         """
         return await self.pool.fetch(query)
+    
+    async def get_all_events(self):
+        # Якщо використовуєш asyncpg (PostgreSQL, судячи з твого коду):
+        rows = await self.pool.fetch("SELECT * FROM events ORDER BY id DESC")
+        return [dict(row) for row in rows]
 
     async def delete_event(self, event_id):
         await self.pool.execute("UPDATE events SET is_active = FALSE WHERE id = $1", event_id)
