@@ -254,7 +254,7 @@ class Database:
 
     async def get_users_by_event(self, event_id):
         query = """
-        SELECT DISTINCT user_tg_id as tg_id 
+        SELECT DISTINCT user_id as tg_id 
         FROM orders 
         WHERE event_id = $1 AND status = 'confirmed'
         """
